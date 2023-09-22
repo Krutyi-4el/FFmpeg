@@ -1,0 +1,46 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-2019
+    permissions: write-all
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v3
+      - uses: ilammy/msvc-dev-cmd@v1.12.0
+      - uses: msys2/setup-msys2@v2
+        with:
+          install: >
+            zip
+            make
+            nasm
+            diffutils
+            pkg-config
+
+      - name: Build
+        shell: cmd
+        run: >
+          set old_path="%PATH%"
+          && "%VCINSTALLDIR%\Auxiliary\Build\vcvarsall.bat" x86
+          && python -c "import os, sys, subprocess;
+          old_path, new_path = map(lambda k: os.getenv(k).split(os.pathsep), ('old_path', 'PATH'));
+          print(':'.join(
+          subprocess.check_output(['cygpath', '-u', p], text=True).strip()
+          for p in new_path
+          if old_path.count(p) != new_path.count(p)
+          ))" > path_diff
+          && msys2 build.sh
+
+      - name: Upload zip
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ./ffmpeg.zip
