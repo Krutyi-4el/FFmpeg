@@ -37,12 +37,14 @@
 #include "avcodec.h"
 #include "avcodec_internal.h"
 #include "bsf.h"
+#include "codec_desc.h"
 #include "codec_internal.h"
 #include "decode.h"
 #include "encode.h"
 #include "frame_thread_encoder.h"
 #include "hwconfig.h"
 #include "internal.h"
+#include "refstruct.h"
 #include "thread.h"
 
 /**
@@ -458,7 +460,7 @@ av_cold int avcodec_close(AVCodecContext *avctx)
         av_frame_free(&avci->in_frame);
         av_frame_free(&avci->recon_frame);
 
-        av_buffer_unref(&avci->pool);
+        ff_refstruct_unref(&avci->pool);
 
         ff_hwaccel_uninit(avctx);
 
@@ -654,12 +656,7 @@ void avcodec_string(char *buf, int buf_size, AVCodecContext *enc, int encode)
         if (enc->sample_rate) {
             av_bprintf(&bprint, "%d Hz, ", enc->sample_rate);
         }
-        {
-            char buf[512];
-            int ret = av_channel_layout_describe(&enc->ch_layout, buf, sizeof(buf));
-            if (ret >= 0)
-                av_bprintf(&bprint, "%s", buf);
-        }
+        av_channel_layout_describe_bprint(&enc->ch_layout, &bprint);
         if (enc->sample_fmt != AV_SAMPLE_FMT_NONE &&
             (str = av_get_sample_fmt_name(enc->sample_fmt))) {
             av_bprintf(&bprint, ", %s", str);

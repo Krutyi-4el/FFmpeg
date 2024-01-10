@@ -287,7 +287,7 @@ av_cold void ff_vk_video_common_uninit(FFVulkanContext *s,
     if (common->session) {
         vk->DestroyVideoSessionKHR(s->hwctx->act_dev, common->session,
                                    s->hwctx->alloc);
-        common->session = NULL;
+        common->session = VK_NULL_HANDLE;
     }
 
     if (common->nb_mem && common->mem)
@@ -384,7 +384,7 @@ av_cold int ff_vk_video_common_init(void *log, FFVulkanContext *s,
             .memorySize = mem[i].memoryRequirements.size,
         };
 
-        av_log(log, AV_LOG_VERBOSE, "Allocating %"SIZE_SPECIFIER" bytes in bind index %i for video session\n",
+        av_log(log, AV_LOG_VERBOSE, "Allocating %"PRIu64" bytes in bind index %i for video session\n",
                bind_mem[i].memorySize, bind_mem[i].memoryBindIndex);
     }
 

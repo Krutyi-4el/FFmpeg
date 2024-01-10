@@ -562,8 +562,7 @@ static void encode_alpha_plane(ProresContext *ctx, PutBitContext *pb,
             run++;
         }
     } while (idx < num_coeffs);
-    if (run)
-        put_alpha_run(pb, run);
+    put_alpha_run(pb, run);
 }
 
 static int encode_slice(AVCodecContext *avctx, const AVFrame *pic,
@@ -1415,7 +1414,6 @@ static const AVOption options[] = {
 
 static const AVClass proresenc_class = {
     .class_name = "ProRes encoder",
-    .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
