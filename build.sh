@@ -50,7 +50,7 @@ build_ffmpeg() {
     ./configure --prefix="$FFMPEG_INSTALL" \
       --toolchain=msvc --arch=x86_32 --enable-static \
       --extra-ldflags="-NODEFAULTLIB:MSVCRT" --pkg-config-flags="--static" \
-      --enable-gpl --enable-version3 --extra-version="K4_$(date '+%s')" \
+      --enable-gpl --enable-version3 --extra-version="SL_$(date '+%s')" \
       --disable-programs --enable-ffmpeg --enable-libopus \
       --disable-debug --disable-doc
   )"
