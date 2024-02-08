@@ -87,10 +87,10 @@ typedef struct IntraEdgeParams {
     uint8_t* left;
     int filter_flag;
 
-    uint16_t left_array[3 * MAX_TB_SIZE + 3];
-    uint16_t filtered_left_array[3 * MAX_TB_SIZE + 3];
-    uint16_t top_array[3 * MAX_TB_SIZE + 3];
-    uint16_t filtered_top_array[3 * MAX_TB_SIZE + 3];
+    uint16_t left_array[6 * MAX_TB_SIZE + 5];
+    uint16_t filtered_left_array[6 * MAX_TB_SIZE + 5];
+    uint16_t top_array[6 * MAX_TB_SIZE + 5];
+    uint16_t filtered_top_array[6 * MAX_TB_SIZE + 5];
 } IntraEdgeParams;
 
 #define PROF_BORDER_EXT         1
@@ -138,4 +138,8 @@ void ff_vvc_dsp_init(VVCDSPContext *vvcdsp, int bit_depth)
         VVC_DSP(8);
         break;
     }
+
+#if ARCH_X86
+    ff_vvc_dsp_init_x86(vvcdsp, bit_depth);
+#endif
 }

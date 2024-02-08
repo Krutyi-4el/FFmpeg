@@ -264,6 +264,9 @@ static int grab_read_header(AVFormatContext *s1)
     AVRational framerate;
     int ret = 0;
 
+    av_log(s1, AV_LOG_WARNING, "bktr input is deprecated and will be removed. "
+           "Please contact the developers if you are interested in maintaining it.\n");
+
     if (!s->framerate)
         switch (s->standard) {
         case PAL:   s->framerate = av_strdup("pal");  break;
@@ -343,6 +346,7 @@ static const AVOption options[] = {
 
 static const AVClass bktr_class = {
     .class_name = "BKTR grab indev",
+    .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
     .category   = AV_CLASS_CATEGORY_DEVICE_VIDEO_INPUT,

@@ -257,8 +257,8 @@ static TransformBlock* add_tb(TransformUnit *tu, VVCLocalContext *lc,
     tb->y0 = y0;
     tb->tb_width  = tb_width;
     tb->tb_height = tb_height;
-    tb->log2_tb_width  = log2(tb_width);
-    tb->log2_tb_height = log2(tb_height);
+    tb->log2_tb_width  = av_log2(tb_width);
+    tb->log2_tb_height = av_log2(tb_height);
 
     tb->max_scan_x = tb->max_scan_y = 0;
     tb->min_scan_x = tb->min_scan_y = 0;
@@ -1554,8 +1554,8 @@ static void mvp_add_difference(MotionInfo *mi, const int num_cp_mv,
         if (mi->pred_flag & mask) {
             for (int j = 0; j < num_cp_mv; j++) {
                 const Mv *mvd = &mvds[i][j];
-                mi->mv[i][j].x += mvd->x << amvr_shift;
-                mi->mv[i][j].y += mvd->y << amvr_shift;
+                mi->mv[i][j].x += mvd->x * (1 << amvr_shift);
+                mi->mv[i][j].y += mvd->y * (1 << amvr_shift);
             }
         }
     }

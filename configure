@@ -2239,6 +2239,7 @@ HEADERS_LIST="
     opencv2_core_core_c_h
     OpenGL_gl3_h
     poll_h
+    pthread_np_h
     sys_param_h
     sys_resource_h
     sys_select_h
@@ -2341,6 +2342,8 @@ SYSTEM_FUNCS="
     posix_memalign
     prctl
     pthread_cancel
+    pthread_set_name_np
+    pthread_setname_np
     sched_getaffinity
     SecItemImport
     SetConsoleTextAttribute
@@ -2851,6 +2854,7 @@ dvvideo_decoder_select="dvprofile idctdsp"
 dvvideo_encoder_select="dvprofile fdctdsp me_cmp pixblockdsp"
 dxa_decoder_deps="zlib"
 dxv_decoder_select="lzf texturedsp"
+dxv_encoder_select="texturedspenc"
 eac3_decoder_select="ac3_decoder"
 eac3_encoder_select="ac3_encoder"
 eamad_decoder_select="aandcttables blockdsp bswapdsp"
@@ -3551,7 +3555,7 @@ mp3_demuxer_select="mpegaudio_parser"
 mp3_muxer_select="mpegaudioheader"
 mp4_muxer_select="mov_muxer"
 mpegts_demuxer_select="iso_media"
-mpegts_muxer_select="ac3_parser adts_muxer latm_muxer h264_mp4toannexb_bsf hevc_mp4toannexb_bsf"
+mpegts_muxer_select="ac3_parser adts_muxer latm_muxer h264_mp4toannexb_bsf hevc_mp4toannexb_bsf vvc_mp4toannexb_bsf"
 mpegtsraw_demuxer_select="mpegts_demuxer"
 mxf_muxer_select="pcm_rechunk_bsf rangecoder"
 mxf_d10_muxer_select="mxf_muxer"
@@ -5633,7 +5637,7 @@ case $target_os in
         oss_outdev_extralibs="-lossaudio"
         enabled gcc || check_ldflags -Wl,-zmuldefs
         ;;
-    openbsd|bitrig)
+    openbsd)
         disable symver
         enable section_data_rel_ro
         striptype=""
@@ -6523,6 +6527,7 @@ check_headers malloc.h
 check_headers mftransform.h
 check_headers net/udplite.h
 check_headers poll.h
+check_headers pthread_np.h
 check_headers sys/param.h
 check_headers sys/resource.h
 check_headers sys/select.h
@@ -6691,6 +6696,12 @@ if ! disabled pthreads && ! enabled w32threads && ! enabled os2threads; then
     if enabled pthreads; then
         check_builtin sem_timedwait semaphore.h "sem_t *s; sem_init(s,0,0); sem_timedwait(s,0); sem_destroy(s)" $pthreads_extralibs
         check_func pthread_cancel $pthreads_extralibs
+        hdrs=pthread.h
+        if enabled pthread_np_h; then
+            hdrs="$hdrs pthread_np.h"
+        fi
+        check_lib pthread_set_name_np "$hdrs" pthread_set_name_np -lpthread
+        check_lib pthread_setname_np "$hdrs" pthread_setname_np -lpthread
     fi
 fi
 

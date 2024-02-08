@@ -208,10 +208,10 @@ error:
             flags |= FLV_CODECID_NELLYMOSER            | FLV_SAMPLESSIZE_16BIT;
         break;
     case AV_CODEC_ID_PCM_MULAW:
-        flags = FLV_CODECID_PCM_MULAW | FLV_SAMPLERATE_SPECIAL | FLV_SAMPLESSIZE_16BIT;
+        flags |= FLV_CODECID_PCM_MULAW | FLV_SAMPLESSIZE_16BIT;
         break;
     case AV_CODEC_ID_PCM_ALAW:
-        flags = FLV_CODECID_PCM_ALAW  | FLV_SAMPLERATE_SPECIAL | FLV_SAMPLESSIZE_16BIT;
+        flags |= FLV_CODECID_PCM_ALAW | FLV_SAMPLESSIZE_16BIT;
         break;
     case 0:
         flags |= par->codec_tag << 4;
@@ -1105,6 +1105,7 @@ static const AVOption options[] = {
 
 static const AVClass flv_muxer_class = {
     .class_name = "flv muxer",
+    .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
 };

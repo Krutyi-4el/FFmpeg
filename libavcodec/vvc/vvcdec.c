@@ -55,14 +55,6 @@ typedef struct TabList {
     l->nb_tabs++;                                        \
 } while (0)
 
-static size_t tl_size(const TabList *l)
-{
-    size_t total = 0;
-    for (int i = 0; i < l->nb_tabs; i++)
-        total += l->tabs[i].size;
-    return total;
-}
-
 static void tl_init(TabList *l, const int zero, const int realloc)
 {
     l->nb_tabs = 0;
@@ -72,32 +64,28 @@ static void tl_init(TabList *l, const int zero, const int realloc)
 
 static int tl_free(TabList *l)
 {
-    for (int i = 1; i < l->nb_tabs; i++) {
-        void **p = l->tabs[i].tab;
-        *p = NULL;
-    }
-    av_freep(l->tabs[0].tab);
+    for (int i = 0; i < l->nb_tabs; i++)
+        av_freep(l->tabs[i].tab);
+
     return 0;
 }
 
 static int tl_create(TabList *l)
 {
-    size_t size = tl_size(l);
     if (l->realloc) {
-        uint8_t *p = l->zero ? av_mallocz(size) : av_malloc(size);
-        if (!p)
-            return AVERROR(ENOMEM);
         tl_free(l);
 
-        // set pointer for each table
         for (int i = 0; i < l->nb_tabs; i++) {
             Tab *t = l->tabs + i;
-            *t->tab = p;
-            p += t->size;
+            *t->tab = l->zero ? av_mallocz(t->size) : av_malloc(t->size);
+            if (!*t->tab)
+                return AVERROR(ENOMEM);
         }
-    } else {
-        if (l->zero)
-            memset(*l->tabs[0].tab, 0, size);
+    } else if (l->zero) {
+        for (int i = 0; i < l->nb_tabs; i++) {
+            Tab *t = l->tabs + i;
+            memset(*t->tab, 0, t->size);
+        }
     }
     return 0;
 }
@@ -334,7 +322,7 @@ static int pic_arrays_init(VVCContext *s, VVCFrameContext *fc)
     if (ret < 0)
         return ret;
 
-    memset(fc->tab.slice_idx, -1, sizeof(*fc->tab.slice_idx) * fc->tab.sz.ctu_count);
+    memset(fc->tab.slice_idx, -1, sizeof(*fc->tab.slice_idx) * ctu_count);
 
     if (fc->tab.sz.ctu_count != ctu_count) {
         ff_refstruct_pool_uninit(&fc->rpl_tab_pool);
@@ -463,8 +451,9 @@ static int slices_realloc(VVCFrameContext *fc)
 }
 
 static void ep_init_cabac_decoder(SliceContext *sc, const int index,
-    const H2645NAL *nal, GetBitContext *gb)
+    const H2645NAL *nal, GetBitContext *gb, const CodedBitstreamUnit *unit)
 {
+    const H266RawSlice *slice     = unit->content_ref;
     const H266RawSliceHeader *rsh = sc->sh.r;
     EntryPoint *ep                = sc->eps + index;
     int size;
@@ -473,10 +462,10 @@ static void ep_init_cabac_decoder(SliceContext *sc, const int index,
         int skipped = 0;
         int64_t start =  (gb->index >> 3);
         int64_t end = start + rsh->sh_entry_point_offset_minus1[index] + 1;
-        while (skipped < nal->skipped_bytes && nal->skipped_bytes_pos[skipped] <= start) {
+        while (skipped < nal->skipped_bytes && nal->skipped_bytes_pos[skipped] <= start + slice->header_size) {
             skipped++;
         }
-        while (skipped < nal->skipped_bytes && nal->skipped_bytes_pos[skipped] < end) {
+        while (skipped < nal->skipped_bytes && nal->skipped_bytes_pos[skipped] <= end + slice->header_size) {
             end--;
             skipped++;
         }
@@ -518,7 +507,7 @@ static int slice_init_entry_points(SliceContext *sc,
             fc->tab.slice_idx[rs] = sc->slice_idx;
         }
 
-        ep_init_cabac_decoder(sc, i, nal, &gb);
+        ep_init_cabac_decoder(sc, i, nal, &gb, unit);
 
         if (i + 1 < sc->nb_eps)
             ctu_addr = sh->entry_point_start_ctu[i];
@@ -933,9 +922,15 @@ static av_cold void vvc_decode_flush(AVCodecContext *avctx)
 {
     VVCContext *s  = avctx->priv_data;
     int got_output = 0;
+    VVCFrameContext *last;
 
     while (s->nb_delayed)
         wait_delayed_frame(s, NULL, &got_output);
+
+    last = get_frame_context(s, s->fcs, s->nb_frames - 1);
+    ff_vvc_flush_dpb(last);
+
+    s->eos = 1;
 }
 
 static av_cold int vvc_decode_free(AVCodecContext *avctx)

@@ -2392,6 +2392,9 @@ static void print_pkt_side_data(WriterContext *w,
             AVContentLightMetadata *metadata = (AVContentLightMetadata *)sd->data;
             print_int("max_content", metadata->MaxCLL);
             print_int("max_average", metadata->MaxFALL);
+        } else if (sd->type == AV_PKT_DATA_AMBIENT_VIEWING_ENVIRONMENT) {
+            print_ambient_viewing_environment(
+                w, (const AVAmbientViewingEnvironment *)sd->data);
         } else if (sd->type == AV_PKT_DATA_DYNAMIC_HDR10_PLUS) {
             AVDynamicHDRPlus *metadata = (AVDynamicHDRPlus *)sd->data;
             print_dynamic_hdr10_plus(w, metadata);
@@ -3828,7 +3831,9 @@ static int opt_input_file(void *optctx, const char *arg)
     }
     if (!strcmp(arg, "-"))
         arg = "fd:";
-    input_filename = arg;
+    input_filename = av_strdup(arg);
+    if (!input_filename)
+        return AVERROR(ENOMEM);
 
     return 0;
 }
@@ -3849,22 +3854,25 @@ static int opt_output_file_o(void *optctx, const char *opt, const char *arg)
     }
     if (!strcmp(arg, "-"))
         arg = "fd:";
-    output_filename = arg;
+    output_filename = av_strdup(arg);
+    if (!output_filename)
+        return AVERROR(ENOMEM);
 
     return 0;
 }
 
 static int opt_print_filename(void *optctx, const char *opt, const char *arg)
 {
-    print_input_filename = arg;
-    return 0;
+    av_freep(&print_input_filename);
+    print_input_filename = av_strdup(arg);
+    return print_input_filename ? 0 : AVERROR(ENOMEM);
 }
 
 void show_help_default(const char *opt, const char *arg)
 {
     av_log_set_callback(log_callback_help);
     show_usage();
-    show_help_options(options, "Main options:", 0, 0, 0);
+    show_help_options(options, "Main options:", 0, 0);
     printf("\n");
 
     show_help_children(avformat_get_class(), AV_OPT_FLAG_DECODING_PARAM);
@@ -4287,6 +4295,9 @@ int main(int argc, char **argv)
 
 end:
     av_freep(&output_format);
+    av_freep(&output_filename);
+    av_freep(&input_filename);
+    av_freep(&print_input_filename);
     av_freep(&read_intervals);
     av_hash_freep(&hash);
 

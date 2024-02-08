@@ -24,7 +24,6 @@
 #include "libavutil/avassert.h"
 #include "libavutil/common.h"
 #include "libavutil/iamf.h"
-#include "libavcodec/get_bits.h"
 #include "libavcodec/put_bits.h"
 #include "avformat.h"
 #include "avio_internal.h"
@@ -257,10 +256,10 @@ static int write_parameter_block(AVFormatContext *s, const AVIAMFParamDefinition
         }
     }
 
-    dyn_size = avio_close_dyn_buf(dyn_bc, &dyn_buf);
+    dyn_size = avio_get_dyn_buf(dyn_bc, &dyn_buf);
     ffio_write_leb(s->pb, dyn_size);
     avio_write(s->pb, dyn_buf, dyn_size);
-    av_free(dyn_buf);
+    ffio_free_dyn_buf(&dyn_bc);
 
     return 0;
 }
@@ -277,6 +276,16 @@ static int iamf_write_packet(AVFormatContext *s, AVPacket *pkt)
     size_t side_data_size;
     int dyn_size, type = st->id <= 17 ? st->id + IAMF_OBU_IA_AUDIO_FRAME_ID0 : IAMF_OBU_IA_AUDIO_FRAME;
     int ret;
+
+    if (!pkt->size) {
+        uint8_t *new_extradata = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, NULL);
+
+        if (!new_extradata)
+            return AVERROR_INVALIDDATA;
+
+        // TODO: update FLAC Streaminfo on seekable output
+        return 0;
+    }
 
     if (s->nb_stream_groups && st->id == c->first_stream_id) {
         AVIAMFParamDefinition *mix =
@@ -330,10 +339,10 @@ static int iamf_write_packet(AVFormatContext *s, AVPacket *pkt)
     if (st->id > 17)
         ffio_write_leb(dyn_bc, st->id);
 
-    dyn_size = avio_close_dyn_buf(dyn_bc, &dyn_buf);
+    dyn_size = avio_get_dyn_buf(dyn_bc, &dyn_buf);
     ffio_write_leb(s->pb, dyn_size + pkt->size);
     avio_write(s->pb, dyn_buf, dyn_size);
-    av_free(dyn_buf);
+    ffio_free_dyn_buf(&dyn_bc);
     avio_write(s->pb, pkt->data, pkt->size);
 
     return 0;

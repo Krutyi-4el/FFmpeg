@@ -2304,7 +2304,7 @@ static int get_cv_pixel_info(
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(avctx->pix_fmt);
     VTEncContext *vtctx = avctx->priv_data;
     int av_format       = frame->format;
-    int av_color_range  = frame->color_range;
+    int av_color_range  = avctx->color_range;
     int i;
     int range_guessed;
     int status;
@@ -2907,6 +2907,7 @@ static const AVOption h264_options[] = {
 
 static const AVClass h264_videotoolbox_class = {
     .class_name = "h264_videotoolbox",
+    .item_name  = av_default_item_name,
     .option     = h264_options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
@@ -2942,6 +2943,7 @@ static const AVOption hevc_options[] = {
 
 static const AVClass hevc_videotoolbox_class = {
     .class_name = "hevc_videotoolbox",
+    .item_name  = av_default_item_name,
     .option     = hevc_options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
@@ -2980,6 +2982,7 @@ static const AVOption prores_options[] = {
 
 static const AVClass prores_videotoolbox_class = {
     .class_name = "prores_videotoolbox",
+    .item_name  = av_default_item_name,
     .option     = prores_options,
     .version    = LIBAVUTIL_VERSION_INT,
 };

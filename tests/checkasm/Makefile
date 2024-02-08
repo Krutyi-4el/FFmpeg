@@ -33,12 +33,14 @@ AVCODECOBJS-$(CONFIG_JPEG2000_DECODER)  += jpeg2000dsp.o
 AVCODECOBJS-$(CONFIG_OPUS_DECODER)      += opusdsp.o
 AVCODECOBJS-$(CONFIG_PIXBLOCKDSP)       += pixblockdsp.o
 AVCODECOBJS-$(CONFIG_HEVC_DECODER)      += hevc_add_res.o hevc_deblock.o hevc_idct.o hevc_sao.o hevc_pel.o
+AVCODECOBJS-$(CONFIG_SVQ1_ENCODER)      += svq1enc.o
 AVCODECOBJS-$(CONFIG_TAK_DECODER)       += takdsp.o
 AVCODECOBJS-$(CONFIG_UTVIDEO_DECODER)   += utvideodsp.o
 AVCODECOBJS-$(CONFIG_V210_DECODER)      += v210dec.o
 AVCODECOBJS-$(CONFIG_V210_ENCODER)      += v210enc.o
 AVCODECOBJS-$(CONFIG_VORBIS_DECODER)    += vorbisdsp.o
 AVCODECOBJS-$(CONFIG_VP9_DECODER)       += vp9dsp.o
+AVCODECOBJS-$(CONFIG_VVC_DECODER)       += vvc_mc.o
 
 CHECKASMOBJS-$(CONFIG_AVCODEC)          += $(AVCODECOBJS-yes)
 

@@ -19,8 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "config_components.h"
-
 #include "libavutil/avassert.h"
 #include "libavutil/iamf.h"
 #include "libavutil/intreadwrite.h"
@@ -28,7 +26,6 @@
 #include "libavcodec/mathops.h"
 #include "avformat.h"
 #include "avio_internal.h"
-#include "demux.h"
 #include "iamf.h"
 #include "iamf_parse.h"
 #include "internal.h"
@@ -404,6 +401,7 @@ static int iamf_read_header(AVFormatContext *s)
         if (!stg)
             return AVERROR(ENOMEM);
 
+        av_iamf_audio_element_free(&stg->params.iamf_audio_element);
         stg->id = audio_element->audio_element_id;
         stg->params.iamf_audio_element = audio_element->element;
 
@@ -435,6 +433,7 @@ static int iamf_read_header(AVFormatContext *s)
         if (!stg)
             return AVERROR(ENOMEM);
 
+        av_iamf_mix_presentation_free(&stg->params.iamf_mix_presentation);
         stg->id = mix_presentation->mix_presentation_id;
         stg->params.iamf_mix_presentation = mix_presentation->mix;
 

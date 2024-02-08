@@ -209,6 +209,7 @@ static const AVOption options[] = {
 
 static const AVClass mpegts_class = {
     .class_name = "mpegts demuxer",
+    .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
@@ -227,6 +228,7 @@ static const AVOption raw_options[] = {
 
 static const AVClass mpegtsraw_class = {
     .class_name = "mpegtsraw demuxer",
+    .item_name  = av_default_item_name,
     .option     = raw_options,
     .version    = LIBAVUTIL_VERSION_INT,
 };
@@ -810,6 +812,7 @@ static const StreamType ISO_types[] = {
     { 0x20, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_H264       },
     { 0x21, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_JPEG2000   },
     { 0x24, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_HEVC       },
+    { 0x33, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_VVC        },
     { 0x42, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_CAVS       },
     { 0xd1, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_DIRAC      },
     { 0xd2, AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_AVS2       },
@@ -865,6 +868,7 @@ static const StreamType REGD_types[] = {
     { MKTAG('D', 'T', 'S', '3'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_DTS   },
     { MKTAG('E', 'A', 'C', '3'), AVMEDIA_TYPE_AUDIO, AV_CODEC_ID_EAC3  },
     { MKTAG('H', 'E', 'V', 'C'), AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_HEVC  },
+    { MKTAG('V', 'V', 'C', ' '), AVMEDIA_TYPE_VIDEO, AV_CODEC_ID_VVC   },
     { MKTAG('K', 'L', 'V', 'A'), AVMEDIA_TYPE_DATA,  AV_CODEC_ID_SMPTE_KLV },
     { MKTAG('V', 'A', 'N', 'C'), AVMEDIA_TYPE_DATA,  AV_CODEC_ID_SMPTE_2038 },
     { MKTAG('I', 'D', '3', ' '), AVMEDIA_TYPE_DATA,  AV_CODEC_ID_TIMED_ID3 },
