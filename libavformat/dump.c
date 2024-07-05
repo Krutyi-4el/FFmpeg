@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#include "libavutil/avstring.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/display.h"
 #include "libavutil/iamf.h"
@@ -31,6 +32,7 @@
 #include "libavutil/ambient_viewing_environment.h"
 #include "libavutil/dovi_meta.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/replaygain.h"
 #include "libavutil/spherical.h"
@@ -176,10 +178,6 @@ static void dump_paramchange(void *ctx, const AVPacketSideData *sd, int log_leve
     int size = sd->size;
     const uint8_t *data = sd->data;
     uint32_t flags, sample_rate, width, height;
-#if FF_API_OLD_CHANNEL_LAYOUT
-    uint32_t channels;
-    uint64_t layout;
-#endif
 
     if (!data || sd->size < 4)
         goto fail;
@@ -188,27 +186,6 @@ static void dump_paramchange(void *ctx, const AVPacketSideData *sd, int log_leve
     data += 4;
     size -= 4;
 
-#if FF_API_OLD_CHANNEL_LAYOUT
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_COUNT) {
-        if (size < 4)
-            goto fail;
-        channels = AV_RL32(data);
-        data += 4;
-        size -= 4;
-        av_log(ctx, log_level, "channel count %"PRIu32", ", channels);
-    }
-    if (flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_LAYOUT) {
-        if (size < 8)
-            goto fail;
-        layout = AV_RL64(data);
-        data += 8;
-        size -= 8;
-        av_log(ctx, log_level,
-               "channel layout: %s, ", av_get_channel_name(layout));
-    }
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif /* FF_API_OLD_CHANNEL_LAYOUT */
     if (flags & AV_SIDE_DATA_PARAM_CHANGE_SAMPLE_RATE) {
         if (size < 4)
             goto fail;
@@ -282,7 +259,16 @@ static void dump_stereo3d(void *ctx, const AVPacketSideData *sd, int log_level)
 
     stereo = (const AVStereo3D *)sd->data;
 
-    av_log(ctx, log_level, "%s", av_stereo3d_type_name(stereo->type));
+    av_log(ctx, log_level, "%s, view: %s, primary eye: %s",
+           av_stereo3d_type_name(stereo->type), av_stereo3d_view_name(stereo->view),
+           av_stereo3d_primary_eye_name(stereo->primary_eye));
+    if (stereo->baseline)
+        av_log(ctx, log_level, ", baseline: %"PRIu32"", stereo->baseline);
+    if (stereo->horizontal_disparity_adjustment.num && stereo->horizontal_disparity_adjustment.den)
+        av_log(ctx, log_level, ", horizontal_disparity_adjustment: %0.4f",
+               av_q2d(stereo->horizontal_disparity_adjustment));
+    if (stereo->horizontal_field_of_view.num && stereo->horizontal_field_of_view.den)
+        av_log(ctx, log_level, ", horizontal_field_of_view: %0.3f", av_q2d(stereo->horizontal_field_of_view));
 
     if (stereo->flags & AV_STEREO3D_FLAG_INVERT)
         av_log(ctx, log_level, " (inverted)");
@@ -404,10 +390,12 @@ static void dump_spherical(void *ctx, const AVCodecParameters *par,
 
     av_log(ctx, log_level, "%s ", av_spherical_projection_name(spherical->projection));
 
-    yaw = ((double)spherical->yaw) / (1 << 16);
-    pitch = ((double)spherical->pitch) / (1 << 16);
-    roll = ((double)spherical->roll) / (1 << 16);
-    av_log(ctx, log_level, "(%f/%f/%f) ", yaw, pitch, roll);
+    if (spherical->yaw || spherical->pitch || spherical->roll) {
+        yaw = ((double)spherical->yaw) / (1 << 16);
+        pitch = ((double)spherical->pitch) / (1 << 16);
+        roll = ((double)spherical->roll) / (1 << 16);
+        av_log(ctx, log_level, "(%f/%f/%f) ", yaw, pitch, roll);
+    }
 
     if (spherical->projection == AV_SPHERICAL_EQUIRECTANGULAR_TILE) {
         size_t l, t, r, b;
@@ -538,6 +526,46 @@ static void dump_sidedata(void *ctx, const AVStream *st, const char *indent,
     }
 }
 
+static void dump_disposition(int disposition, int log_level)
+{
+    if (disposition & AV_DISPOSITION_DEFAULT)
+        av_log(NULL, log_level, " (default)");
+    if (disposition & AV_DISPOSITION_DUB)
+        av_log(NULL, log_level, " (dub)");
+    if (disposition & AV_DISPOSITION_ORIGINAL)
+        av_log(NULL, log_level, " (original)");
+    if (disposition & AV_DISPOSITION_COMMENT)
+        av_log(NULL, log_level, " (comment)");
+    if (disposition & AV_DISPOSITION_LYRICS)
+        av_log(NULL, log_level, " (lyrics)");
+    if (disposition & AV_DISPOSITION_KARAOKE)
+        av_log(NULL, log_level, " (karaoke)");
+    if (disposition & AV_DISPOSITION_FORCED)
+        av_log(NULL, log_level, " (forced)");
+    if (disposition & AV_DISPOSITION_HEARING_IMPAIRED)
+        av_log(NULL, log_level, " (hearing impaired)");
+    if (disposition & AV_DISPOSITION_VISUAL_IMPAIRED)
+        av_log(NULL, log_level, " (visual impaired)");
+    if (disposition & AV_DISPOSITION_CLEAN_EFFECTS)
+        av_log(NULL, log_level, " (clean effects)");
+    if (disposition & AV_DISPOSITION_ATTACHED_PIC)
+        av_log(NULL, log_level, " (attached pic)");
+    if (disposition & AV_DISPOSITION_TIMED_THUMBNAILS)
+        av_log(NULL, log_level, " (timed thumbnails)");
+    if (disposition & AV_DISPOSITION_CAPTIONS)
+        av_log(NULL, log_level, " (captions)");
+    if (disposition & AV_DISPOSITION_DESCRIPTIONS)
+        av_log(NULL, log_level, " (descriptions)");
+    if (disposition & AV_DISPOSITION_METADATA)
+        av_log(NULL, log_level, " (metadata)");
+    if (disposition & AV_DISPOSITION_DEPENDENT)
+        av_log(NULL, log_level, " (dependent)");
+    if (disposition & AV_DISPOSITION_STILL_IMAGE)
+        av_log(NULL, log_level, " (still image)");
+    if (disposition & AV_DISPOSITION_NON_DIEGETIC)
+        av_log(NULL, log_level, " (non-diegetic)");
+}
+
 /* "user interface" functions */
 static void dump_stream_format(const AVFormatContext *ic, int i,
                                int group_index, int index, int is_output,
@@ -620,42 +648,7 @@ static void dump_stream_format(const AVFormatContext *ic, int i,
             print_fps(1 / av_q2d(st->time_base), "tbn", log_level);
     }
 
-    if (st->disposition & AV_DISPOSITION_DEFAULT)
-        av_log(NULL, log_level, " (default)");
-    if (st->disposition & AV_DISPOSITION_DUB)
-        av_log(NULL, log_level, " (dub)");
-    if (st->disposition & AV_DISPOSITION_ORIGINAL)
-        av_log(NULL, log_level, " (original)");
-    if (st->disposition & AV_DISPOSITION_COMMENT)
-        av_log(NULL, log_level, " (comment)");
-    if (st->disposition & AV_DISPOSITION_LYRICS)
-        av_log(NULL, log_level, " (lyrics)");
-    if (st->disposition & AV_DISPOSITION_KARAOKE)
-        av_log(NULL, log_level, " (karaoke)");
-    if (st->disposition & AV_DISPOSITION_FORCED)
-        av_log(NULL, log_level, " (forced)");
-    if (st->disposition & AV_DISPOSITION_HEARING_IMPAIRED)
-        av_log(NULL, log_level, " (hearing impaired)");
-    if (st->disposition & AV_DISPOSITION_VISUAL_IMPAIRED)
-        av_log(NULL, log_level, " (visual impaired)");
-    if (st->disposition & AV_DISPOSITION_CLEAN_EFFECTS)
-        av_log(NULL, log_level, " (clean effects)");
-    if (st->disposition & AV_DISPOSITION_ATTACHED_PIC)
-        av_log(NULL, log_level, " (attached pic)");
-    if (st->disposition & AV_DISPOSITION_TIMED_THUMBNAILS)
-        av_log(NULL, log_level, " (timed thumbnails)");
-    if (st->disposition & AV_DISPOSITION_CAPTIONS)
-        av_log(NULL, log_level, " (captions)");
-    if (st->disposition & AV_DISPOSITION_DESCRIPTIONS)
-        av_log(NULL, log_level, " (descriptions)");
-    if (st->disposition & AV_DISPOSITION_METADATA)
-        av_log(NULL, log_level, " (metadata)");
-    if (st->disposition & AV_DISPOSITION_DEPENDENT)
-        av_log(NULL, log_level, " (dependent)");
-    if (st->disposition & AV_DISPOSITION_STILL_IMAGE)
-        av_log(NULL, log_level, " (still image)");
-    if (st->disposition & AV_DISPOSITION_NON_DIEGETIC)
-        av_log(NULL, log_level, " (non-diegetic)");
+    dump_disposition(st->disposition, log_level);
     av_log(NULL, log_level, "\n");
 
     dump_metadata(NULL, st->metadata, extra_indent, log_level);
@@ -679,7 +672,9 @@ static void dump_stream_group(const AVFormatContext *ic, uint8_t *printed,
     switch (stg->type) {
     case AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT: {
         const AVIAMFAudioElement *audio_element = stg->params.iamf_audio_element;
-        av_log(NULL, AV_LOG_INFO, " IAMF Audio Element\n");
+        av_log(NULL, AV_LOG_INFO, " IAMF Audio Element:");
+        dump_disposition(stg->disposition, AV_LOG_INFO);
+        av_log(NULL, AV_LOG_INFO, "\n");
         dump_metadata(NULL, stg->metadata, "    ", AV_LOG_INFO);
         for (int j = 0; j < audio_element->nb_layers; j++) {
             const AVIAMFLayer *layer = audio_element->layers[j];
@@ -700,7 +695,9 @@ static void dump_stream_group(const AVFormatContext *ic, uint8_t *printed,
     }
     case AV_STREAM_GROUP_PARAMS_IAMF_MIX_PRESENTATION: {
         const AVIAMFMixPresentation *mix_presentation = stg->params.iamf_mix_presentation;
-        av_log(NULL, AV_LOG_INFO, " IAMF Mix Presentation\n");
+        av_log(NULL, AV_LOG_INFO, " IAMF Mix Presentation:");
+        dump_disposition(stg->disposition, AV_LOG_INFO);
+        av_log(NULL, AV_LOG_INFO, "\n");
         dump_metadata(NULL, stg->metadata, "    ", AV_LOG_INFO);
         dump_dictionary(NULL, mix_presentation->annotations, "Annotations", "    ", AV_LOG_INFO);
         for (int j = 0; j < mix_presentation->nb_submixes; j++) {
@@ -735,6 +732,35 @@ static void dump_stream_group(const AVFormatContext *ic, uint8_t *printed,
                     av_log(NULL, AV_LOG_INFO, " Binaural");
                 av_log(NULL, AV_LOG_INFO, "\n");
             }
+        }
+        break;
+    }
+    case AV_STREAM_GROUP_PARAMS_TILE_GRID: {
+        const AVStreamGroupTileGrid *tile_grid = stg->params.tile_grid;
+        AVCodecContext *avctx = avcodec_alloc_context3(NULL);
+        const char *ptr = NULL;
+        av_log(NULL, AV_LOG_INFO, " Tile Grid:");
+        if (avctx && stg->nb_streams && !avcodec_parameters_to_context(avctx, stg->streams[0]->codecpar)) {
+            avctx->width  = tile_grid->width;
+            avctx->height = tile_grid->height;
+            avctx->coded_width  = tile_grid->coded_width;
+            avctx->coded_height = tile_grid->coded_height;
+            if (ic->dump_separator)
+                av_opt_set(avctx, "dump_separator", ic->dump_separator, 0);
+            buf[0] = 0;
+            avcodec_string(buf, sizeof(buf), avctx, is_output);
+            ptr = av_stristr(buf, " ");
+        }
+        avcodec_free_context(&avctx);
+        if (ptr)
+            av_log(NULL, AV_LOG_INFO, "%s", ptr);
+        dump_disposition(stg->disposition, AV_LOG_INFO);
+        av_log(NULL, AV_LOG_INFO, "\n");
+        dump_metadata(NULL, stg->metadata, "    ", AV_LOG_INFO);
+        for (int i = 0; i < stg->nb_streams; i++) {
+            const AVStream *st = stg->streams[i];
+            dump_stream_format(ic, st->index, i, index, is_output, AV_LOG_VERBOSE);
+            printed[st->index] = 1;
         }
         break;
     }

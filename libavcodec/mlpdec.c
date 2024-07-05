@@ -306,15 +306,6 @@ static av_cold int mlp_decode_init(AVCodecContext *avctx)
         m->substream[substr].lossless_check_data = 0xffffffff;
     ff_mlpdsp_init(&m->dsp);
 
-#if FF_API_OLD_CHANNEL_LAYOUT
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (avctx->request_channel_layout) {
-        av_channel_layout_uninit(&m->downmix_layout);
-        av_channel_layout_from_mask(&m->downmix_layout, avctx->request_channel_layout);
-    }
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
     if (m->downmix_layout.nb_channels) {
         if (!av_channel_layout_compare(&m->downmix_layout, &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO) ||
             !av_channel_layout_compare(&m->downmix_layout, &(AVChannelLayout)AV_CHANNEL_LAYOUT_STEREO_DOWNMIX)) {
@@ -1221,6 +1212,7 @@ static int read_access_unit(AVCodecContext *avctx, AVFrame *frame,
             goto error;
         m->is_major_sync_unit = 1;
         header_size += m->major_sync_header_size;
+        frame->flags |= AV_FRAME_FLAG_KEY;
     }
 
     if (!m->params_valid) {

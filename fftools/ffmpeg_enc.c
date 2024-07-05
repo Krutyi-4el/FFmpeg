@@ -20,8 +20,6 @@
 #include <stdint.h>
 
 #include "ffmpeg.h"
-#include "ffmpeg_utils.h"
-#include "thread_queue.h"
 
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
@@ -32,14 +30,13 @@
 #include "libavutil/frame.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/log.h"
+#include "libavutil/mem.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/rational.h"
 #include "libavutil/time.h"
 #include "libavutil/timestamp.h"
 
 #include "libavcodec/avcodec.h"
-
-#include "libavformat/avformat.h"
 
 struct Encoder {
     // combined size of all the packets received from the encoder
@@ -49,6 +46,7 @@ struct Encoder {
     uint64_t packets_encoded;
 
     int opened;
+    int attach_par;
 
     Scheduler      *sch;
     unsigned        sch_idx;
@@ -93,7 +91,6 @@ static int hw_device_setup_for_encode(OutputStream *ost, AVBufferRef *frames_ref
 {
     const AVCodecHWConfig *config;
     HWDevice *dev = NULL;
-    int i;
 
     if (frames_ref &&
         ((AVHWFramesContext*)frames_ref->data)->format ==
@@ -103,7 +100,7 @@ static int hw_device_setup_for_encode(OutputStream *ost, AVBufferRef *frames_ref
         frames_ref = NULL;
     }
 
-    for (i = 0;; i++) {
+    for (int i = 0;; i++) {
         config = avcodec_get_hw_config(ost->enc_ctx->codec, i);
         if (!config)
             break;
@@ -171,7 +168,7 @@ int enc_open(void *opaque, const AVFrame *frame)
     InputStream *ist = ost->ist;
     Encoder              *e = ost->enc;
     AVCodecContext *enc_ctx = ost->enc_ctx;
-    Decoder            *dec;
+    Decoder            *dec = NULL;
     const AVCodec      *enc = enc_ctx->codec;
     OutputFile          *of = ost->file;
     FrameData *fd;
@@ -187,6 +184,20 @@ int enc_open(void *opaque, const AVFrame *frame)
     if (frame) {
         av_assert0(frame->opaque_ref);
         fd = (FrameData*)frame->opaque_ref->data;
+
+        for (int i = 0; i < frame->nb_side_data; i++) {
+            const AVSideDataDescriptor *desc = av_frame_side_data_desc(frame->side_data[i]->type);
+
+            if (!(desc->props & AV_SIDE_DATA_PROP_GLOBAL))
+                continue;
+
+            ret = av_frame_side_data_clone(&enc_ctx->decoded_side_data,
+                                           &enc_ctx->nb_decoded_side_data,
+                                           frame->side_data[i],
+                                           AV_FRAME_SIDE_DATA_FLAG_UNIQUE);
+            if (ret < 0)
+                return ret;
+        }
     }
 
     ret = set_encoder_id(of, ost);
@@ -269,9 +280,6 @@ int enc_open(void *opaque, const AVFrame *frame)
         break;
         }
     case AVMEDIA_TYPE_SUBTITLE:
-        if (ost->enc_timebase.num)
-            av_log(ost, AV_LOG_WARNING,
-                   "-enc_time_base not supported for subtitles, ignoring\n");
         enc_ctx->time_base = AV_TIME_BASE_Q;
 
         if (!enc_ctx->width) {
@@ -299,16 +307,10 @@ int enc_open(void *opaque, const AVFrame *frame)
     if (ost->bitexact)
         enc_ctx->flags |= AV_CODEC_FLAG_BITEXACT;
 
-    if (!av_dict_get(ost->encoder_opts, "threads", NULL, 0))
-        av_dict_set(&ost->encoder_opts, "threads", "auto", 0);
+    if (enc->capabilities & AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE)
+        enc_ctx->flags |= AV_CODEC_FLAG_COPY_OPAQUE;
 
-    if (enc->capabilities & AV_CODEC_CAP_ENCODER_REORDERED_OPAQUE) {
-        ret = av_dict_set(&ost->encoder_opts, "flags", "+copy_opaque", AV_DICT_MULTIKEY);
-        if (ret < 0)
-            return ret;
-    }
-
-    av_dict_set(&ost->encoder_opts, "flags", "+frame_duration", AV_DICT_MULTIKEY);
+    enc_ctx->flags |= AV_CODEC_FLAG_FRAME_DURATION;
 
     ret = hw_device_setup_for_encode(ost, frame ? frame->hw_frames_ctx : NULL);
     if (ret < 0) {
@@ -317,7 +319,7 @@ int enc_open(void *opaque, const AVFrame *frame)
         return ret;
     }
 
-    if ((ret = avcodec_open2(ost->enc_ctx, enc, &ost->encoder_opts)) < 0) {
+    if ((ret = avcodec_open2(ost->enc_ctx, enc, NULL)) < 0) {
         if (ret != AVERROR_EXPERIMENTAL)
             av_log(ost, AV_LOG_ERROR, "Error while opening encoder - maybe "
                    "incorrect parameters such as bit_rate, rate, width or height.\n");
@@ -329,10 +331,6 @@ int enc_open(void *opaque, const AVFrame *frame)
     if (ost->enc_ctx->frame_size)
         frame_samples = ost->enc_ctx->frame_size;
 
-    ret = check_avoptions(ost->encoder_opts);
-    if (ret < 0)
-        return ret;
-
     if (ost->enc_ctx->bit_rate && ost->enc_ctx->bit_rate < 1000 &&
         ost->enc_ctx->codec_id != AV_CODEC_ID_CODEC2 /* don't complain about 700 bit/s modes */)
         av_log(ost, AV_LOG_WARNING, "The bitrate parameter is set too low."
@@ -343,30 +341,6 @@ int enc_open(void *opaque, const AVFrame *frame)
         av_log(ost, AV_LOG_FATAL,
                "Error initializing the output stream codec context.\n");
         return ret;
-    }
-
-    /*
-     * Add global input side data. For now this is naive, and copies it
-     * from the input stream's global side data. All side data should
-     * really be funneled over AVFrame and libavfilter, then added back to
-     * packet side data, and then potentially using the first packet for
-     * global side data.
-     */
-    if (ist) {
-        int i;
-        for (i = 0; i < ist->st->codecpar->nb_coded_side_data; i++) {
-            AVPacketSideData *sd_src = &ist->st->codecpar->coded_side_data[i];
-            if (sd_src->type != AV_PKT_DATA_CPB_PROPERTIES) {
-                AVPacketSideData *sd_dst = av_packet_side_data_new(&ost->par_in->coded_side_data,
-                                                                   &ost->par_in->nb_coded_side_data,
-                                                                   sd_src->type, sd_src->size, 0);
-                if (!sd_dst)
-                    return AVERROR(ENOMEM);
-                memcpy(sd_dst->data, sd_src->data, sd_src->size);
-                if (ist->autorotate && sd_src->type == AV_PKT_DATA_DISPLAYMATRIX)
-                    av_display_rotation_set((int32_t *)sd_dst->data, 0);
-            }
-        }
     }
 
     // copy timebase while removing common factors
@@ -490,9 +464,9 @@ void enc_stats_write(OutputStream *ost, EncStats *es,
     AVRational  tbi = (AVRational){ 0, 1};
     int64_t    ptsi = INT64_MAX;
 
-    const FrameData *fd;
+    const FrameData *fd = NULL;
 
-    if ((frame && frame->opaque_ref) || (pkt && pkt->opaque_ref)) {
+    if (frame ? frame->opaque_ref : pkt->opaque_ref) {
         fd   = (const FrameData*)(frame ? frame->opaque_ref->data : pkt->opaque_ref->data);
         tbi  = fd->dec.tb;
         ptsi = fd->dec.pts;
@@ -632,7 +606,6 @@ static int encode_frame(OutputFile *of, OutputStream *ost, AVFrame *frame,
     if (frame) {
         FrameData *fd = frame_data(frame);
 
-        fd = frame_data(frame);
         if (!fd)
             return AVERROR(ENOMEM);
 
@@ -695,6 +668,20 @@ static int encode_frame(OutputFile *of, OutputStream *ost, AVFrame *frame,
             return AVERROR(ENOMEM);
         fd->wallclock[LATENCY_PROBE_ENC_POST] = av_gettime_relative();
 
+        // attach stream parameters to first packet if requested
+        avcodec_parameters_free(&fd->par_enc);
+        if (e->attach_par && !e->packets_encoded) {
+            fd->par_enc = avcodec_parameters_alloc();
+            if (!fd->par_enc)
+                return AVERROR(ENOMEM);
+
+            ret = avcodec_parameters_from_context(fd->par_enc, enc);
+            if (ret < 0)
+                return ret;
+        }
+
+        pkt->flags |= AV_PKT_FLAG_TRUSTED;
+
         if (enc->codec_type == AVMEDIA_TYPE_VIDEO) {
             ret = update_video_stats(ost, pkt, !!vstats_filename);
             if (ret < 0)
@@ -729,35 +716,17 @@ static int encode_frame(OutputFile *of, OutputStream *ost, AVFrame *frame,
     av_assert0(0);
 }
 
-static int do_audio_out(OutputFile *of, OutputStream *ost,
-                        AVFrame *frame, AVPacket *pkt)
-{
-    AVCodecContext *enc = ost->enc_ctx;
-
-    if (!(enc->codec->capabilities & AV_CODEC_CAP_PARAM_CHANGE) &&
-        enc->ch_layout.nb_channels != frame->ch_layout.nb_channels) {
-        av_log(ost, AV_LOG_ERROR,
-               "Audio channel count changed and encoder does not support parameter changes\n");
-        return 0;
-    }
-
-    if (!check_recording_time(ost, frame->pts, frame->time_base))
-        return AVERROR_EOF;
-
-    return encode_frame(of, ost, frame, pkt);
-}
-
 static enum AVPictureType forced_kf_apply(void *logctx, KeyframeForceCtx *kf,
-                                          AVRational tb, const AVFrame *in_picture)
+                                          const AVFrame *frame)
 {
     double pts_time;
 
     if (kf->ref_pts == AV_NOPTS_VALUE)
-        kf->ref_pts = in_picture->pts;
+        kf->ref_pts = frame->pts;
 
-    pts_time = (in_picture->pts - kf->ref_pts) * av_q2d(tb);
+    pts_time = (frame->pts - kf->ref_pts) * av_q2d(frame->time_base);
     if (kf->index < kf->nb_pts &&
-        av_compare_ts(in_picture->pts, tb, kf->pts[kf->index], AV_TIME_BASE_Q) >= 0) {
+        av_compare_ts(frame->pts, frame->time_base, kf->pts[kf->index], AV_TIME_BASE_Q) >= 0) {
         kf->index++;
         goto force_keyframe;
     } else if (kf->pexpr) {
@@ -782,7 +751,7 @@ static enum AVPictureType forced_kf_apply(void *logctx, KeyframeForceCtx *kf,
             kf->expr_const_values[FKF_N_FORCED]     += 1;
             goto force_keyframe;
         }
-    } else if (kf->type == KF_FORCE_SOURCE && (in_picture->flags & AV_FRAME_FLAG_KEY)) {
+    } else if (kf->type == KF_FORCE_SOURCE && (frame->flags & AV_FRAME_FLAG_KEY)) {
         goto force_keyframe;
     }
 
@@ -791,28 +760,6 @@ static enum AVPictureType forced_kf_apply(void *logctx, KeyframeForceCtx *kf,
 force_keyframe:
     av_log(logctx, AV_LOG_DEBUG, "Forced keyframe at time %f\n", pts_time);
     return AV_PICTURE_TYPE_I;
-}
-
-/* May modify/reset frame */
-static int do_video_out(OutputFile *of, OutputStream *ost,
-                        AVFrame *in_picture, AVPacket *pkt)
-{
-    AVCodecContext *enc = ost->enc_ctx;
-
-    if (!check_recording_time(ost, in_picture->pts, ost->enc_ctx->time_base))
-        return AVERROR_EOF;
-
-    in_picture->quality = enc->global_quality;
-    in_picture->pict_type = forced_kf_apply(ost, &ost->kf, enc->time_base, in_picture);
-
-#if FFMPEG_OPT_TOP
-    if (ost->top_field_first >= 0) {
-        in_picture->flags &= ~AV_FRAME_FLAG_TOP_FIELD_FIRST;
-        in_picture->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST * (!!ost->top_field_first);
-    }
-#endif
-
-    return encode_frame(of, ost, in_picture, pkt);
 }
 
 static int frame_encode(OutputStream *ost, AVFrame *frame, AVPacket *pkt)
@@ -830,11 +777,30 @@ static int frame_encode(OutputStream *ost, AVFrame *frame, AVPacket *pkt)
     }
 
     if (frame) {
-        return (type == AVMEDIA_TYPE_VIDEO) ? do_video_out(of, ost, frame, pkt) :
-                                              do_audio_out(of, ost, frame, pkt);
+        if (!check_recording_time(ost, frame->pts, frame->time_base))
+            return AVERROR_EOF;
+
+        if (type == AVMEDIA_TYPE_VIDEO) {
+            frame->quality   = ost->enc_ctx->global_quality;
+            frame->pict_type = forced_kf_apply(ost, &ost->kf, frame);
+
+#if FFMPEG_OPT_TOP
+            if (ost->top_field_first >= 0) {
+                frame->flags &= ~AV_FRAME_FLAG_TOP_FIELD_FIRST;
+                frame->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST * (!!ost->top_field_first);
+            }
+#endif
+        } else {
+            if (!(ost->enc_ctx->codec->capabilities & AV_CODEC_CAP_PARAM_CHANGE) &&
+                ost->enc_ctx->ch_layout.nb_channels != frame->ch_layout.nb_channels) {
+                av_log(ost, AV_LOG_ERROR,
+                       "Audio channel count changed and encoder does not support parameter changes\n");
+                return 0;
+            }
+        }
     }
 
-    return  encode_frame(of, ost, NULL, pkt);
+    return encode_frame(of, ost, frame, pkt);
 }
 
 static void enc_thread_set_name(const OutputStream *ost)
@@ -872,7 +838,7 @@ fail:
     return AVERROR(ENOMEM);
 }
 
-void *encoder_thread(void *arg)
+int encoder_thread(void *arg)
 {
     OutputStream *ost = arg;
     Encoder        *e = ost->enc;
@@ -950,5 +916,11 @@ void *encoder_thread(void *arg)
 finish:
     enc_thread_uninit(&et);
 
-    return (void*)(intptr_t)ret;
+    return ret;
+}
+
+int enc_loopback(Encoder *enc)
+{
+    enc->attach_par = 1;
+    return enc->sch_idx;
 }

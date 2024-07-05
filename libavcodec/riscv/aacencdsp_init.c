@@ -22,13 +22,14 @@
 #include "config.h"
 
 #include "libavutil/attributes.h"
-#include "libavutil/float_dsp.h"
 #include "libavutil/cpu.h"
-#include "libavcodec/aacenc.h"
+#include "libavcodec/aacencdsp.h"
 
 void ff_abs_pow34_rvv(float *out, const float *in, const int size);
+void ff_aac_quant_bands_rvv(int *, const float *, const float *, int, int,
+                            int, const float, const float);
 
-av_cold void ff_aac_dsp_init_riscv(AACEncContext *s)
+av_cold void ff_aacenc_dsp_init_riscv(AACEncDSPContext *s)
 {
 #if HAVE_RVV
     int flags = av_get_cpu_flags();
@@ -36,6 +37,7 @@ av_cold void ff_aac_dsp_init_riscv(AACEncContext *s)
     if (flags & AV_CPU_FLAG_RVV_F32) {
         if (flags & AV_CPU_FLAG_RVB_ADDR) {
             s->abs_pow34 = ff_abs_pow34_rvv;
+            s->quant_bands = ff_aac_quant_bands_rvv;
         }
     }
 #endif

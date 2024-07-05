@@ -1,6 +1,5 @@
 /*
- * Raw Captions With Time (RCWT) muxer
- * Author: Marth64 <marth64@proxyid.net>
+ * RCWT (Raw Captions With Time) muxer
  *
  * This file is part of FFmpeg.
  *
@@ -20,16 +19,11 @@
  */
 
 /*
- * Raw Captions With Time (RCWT) is a format native to ccextractor, a commonly
- * used open source tool for processing 608/708 closed caption (CC) sources.
- * It can be used to archive the original, raw CC bitstream and to produce
- * a source file for later CC processing or conversion. As a result,
- * it also allows for interopability with ccextractor for processing CC data
- * extracted via ffmpeg. The format is simple to parse and can be used
- * to retain all lines and variants of CC.
+ * RCWT (Raw Captions With Time) is a format native to ccextractor, a commonly
+ * used open source tool for processing 608/708 Closed Captions (CC) sources.
  *
- * This muxer implements the specification as of 2024-01-05, which has
- * been stable and unchanged for 10 years as of this writing.
+ * This muxer implements the specification as of March 2024, which has
+ * been stable and unchanged since April 2014.
  *
  * This muxer will have some nuances from the way that ccextractor muxes RCWT.
  * No compatibility issues when processing the output with ccextractor
@@ -40,13 +34,7 @@
  * (1) This muxer will identify as "FF" as the writing program identifier, so
  *     as to be honest about the output's origin.
  *
- * (2) ffmpeg's MPEG-1/2, H264, HEVC, etc. decoders extract closed captioning
- *     data differently than ccextractor from embedded SEI/user data.
- *     For example, DVD captioning bytes will be translated to ATSC A53 format.
- *     This allows ffmpeg to handle 608/708 in a consistant way downstream.
- *     This is a lossless conversion and the meaningful data is retained.
- *
- * (3) This muxer will not alter the extracted data except to remove invalid
+ * (2) This muxer will not alter the extracted data except to remove invalid
  *     packets in between valid CC blocks. On the other hand, ccextractor
  *     will by default remove mid-stream padding, and add padding at the end
  *     of the stream (in order to convey the end time of the source video).
@@ -65,44 +53,32 @@
 #define RCWT_BLOCK_SIZE                     3
 
 typedef struct RCWTContext {
-    int cluster_nb_blocks;
     int cluster_pos;
     int64_t cluster_pts;
     uint8_t cluster_buf[RCWT_CLUSTER_MAX_BLOCKS * RCWT_BLOCK_SIZE];
 } RCWTContext;
 
-static void rcwt_init_cluster(AVFormatContext *avf)
+static void rcwt_init_cluster(RCWTContext *rcwt)
 {
-    RCWTContext *rcwt = avf->priv_data;
-
-    rcwt->cluster_nb_blocks = 0;
     rcwt->cluster_pos = 0;
     rcwt->cluster_pts = AV_NOPTS_VALUE;
-    memset(rcwt->cluster_buf, 0, sizeof(rcwt->cluster_buf));
 }
 
 static void rcwt_flush_cluster(AVFormatContext *avf)
 {
     RCWTContext *rcwt = avf->priv_data;
 
-    if (rcwt->cluster_nb_blocks > 0) {
+    if (rcwt->cluster_pos > 0) {
         avio_wl64(avf->pb, rcwt->cluster_pts);
-        avio_wl16(avf->pb, rcwt->cluster_nb_blocks);
-        avio_write(avf->pb, rcwt->cluster_buf, (rcwt->cluster_nb_blocks * RCWT_BLOCK_SIZE));
+        avio_wl16(avf->pb, rcwt->cluster_pos / RCWT_BLOCK_SIZE);
+        avio_write(avf->pb, rcwt->cluster_buf, rcwt->cluster_pos);
     }
 
-    rcwt_init_cluster(avf);
+    rcwt_init_cluster(rcwt);
 }
 
 static int rcwt_write_header(AVFormatContext *avf)
 {
-    if (avf->nb_streams != 1 || avf->streams[0]->codecpar->codec_id != AV_CODEC_ID_EIA_608) {
-        av_log(avf, AV_LOG_ERROR,
-                "RCWT supports only one CC (608/708) stream, more than one stream was "
-                "provided or its codec type was not CC (608/708)\n");
-        return AVERROR(EINVAL);
-    }
-
     avpriv_set_pts_info(avf->streams[0], 64, 1, 1000);
 
     /* magic number */
@@ -120,7 +96,7 @@ static int rcwt_write_header(AVFormatContext *avf)
     avio_wb16(avf->pb, 0x000);
     avio_w8(avf->pb, 0x00);
 
-    rcwt_init_cluster(avf);
+    rcwt_init_cluster(avf->priv_data);
 
     return 0;
 }
@@ -129,10 +105,7 @@ static int rcwt_write_packet(AVFormatContext *avf, AVPacket *pkt)
 {
     RCWTContext *rcwt = avf->priv_data;
 
-    int in_block = 0;
-    int nb_block_bytes = 0;
-
-    if (pkt->size == 0)
+    if (pkt->size < RCWT_BLOCK_SIZE)
         return 0;
 
     /* new PTS, new cluster */
@@ -146,11 +119,11 @@ static int rcwt_write_packet(AVFormatContext *avf, AVPacket *pkt)
         return 0;
     }
 
-    for (int i = 0; i < pkt->size; i++) {
+    for (int i = 0; i <= pkt->size - RCWT_BLOCK_SIZE;) {
         uint8_t cc_valid;
         uint8_t cc_type;
 
-        if (rcwt->cluster_nb_blocks == RCWT_CLUSTER_MAX_BLOCKS) {
+        if (rcwt->cluster_pos == RCWT_CLUSTER_MAX_BLOCKS * RCWT_BLOCK_SIZE) {
             av_log(avf, AV_LOG_WARNING, "Starting new cluster due to size\n");
             rcwt_flush_cluster(avf);
         }
@@ -158,25 +131,14 @@ static int rcwt_write_packet(AVFormatContext *avf, AVPacket *pkt)
         cc_valid = (pkt->data[i] & 0x04) >> 2;
         cc_type = pkt->data[i] & 0x03;
 
-        if (!in_block && !(cc_valid || cc_type == 3))
-            continue;
-
-        memcpy(&rcwt->cluster_buf[rcwt->cluster_pos], &pkt->data[i], 1);
-        rcwt->cluster_pos++;
-
-        if (!in_block) {
-            in_block = 1;
-            nb_block_bytes = 1;
+        if (!(cc_valid || cc_type == 3)) {
+            i++;
             continue;
         }
 
-        nb_block_bytes++;
-
-        if (nb_block_bytes == RCWT_BLOCK_SIZE) {
-            in_block = 0;
-            nb_block_bytes = 0;
-            rcwt->cluster_nb_blocks++;
-        }
+        memcpy(&rcwt->cluster_buf[rcwt->cluster_pos], &pkt->data[i], 3);
+        rcwt->cluster_pos += 3;
+        i                 += 3;
     }
 
     return 0;
@@ -191,10 +153,13 @@ static int rcwt_write_trailer(AVFormatContext *avf)
 
 const FFOutputFormat ff_rcwt_muxer = {
     .p.name             = "rcwt",
-    .p.long_name        = NULL_IF_CONFIG_SMALL("Raw Captions With Time"),
-    .p.extensions       = "bin",
+    .p.long_name        = NULL_IF_CONFIG_SMALL("RCWT (Raw Captions With Time)"),
     .p.flags            = AVFMT_GLOBALHEADER | AVFMT_VARIABLE_FPS | AVFMT_TS_NONSTRICT,
+    .p.video_codec      = AV_CODEC_ID_NONE,
+    .p.audio_codec      = AV_CODEC_ID_NONE,
     .p.subtitle_codec   = AV_CODEC_ID_EIA_608,
+    .flags_internal     = FF_OFMT_FLAG_MAX_ONE_OF_EACH |
+                          FF_OFMT_FLAG_ONLY_DEFAULT_CODECS,
     .priv_data_size     = sizeof(RCWTContext),
     .write_header       = rcwt_write_header,
     .write_packet       = rcwt_write_packet,

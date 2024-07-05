@@ -64,11 +64,7 @@ typedef union {
 
 #include "config.h"
 
-#if   ARCH_ARM
-#   include "arm/intreadwrite.h"
-#elif ARCH_AVR32
-#   include "avr32/intreadwrite.h"
-#elif ARCH_MIPS
+#if ARCH_MIPS
 #   include "mips/intreadwrite.h"
 #elif ARCH_PPC
 #   include "ppc/intreadwrite.h"
@@ -583,9 +579,7 @@ union unaligned_16 { uint16_t l; } __attribute__((packed)) av_alias;
 #endif
 
 /* Parameters for AV_COPY*, AV_SWAP*, AV_ZERO* must be
- * naturally aligned. They may be implemented using MMX,
- * so emms_c() must be called before using any float code
- * afterwards.
+ * naturally aligned.
  */
 
 #define AV_COPY(n, d, s) \

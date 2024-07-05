@@ -27,10 +27,11 @@
 #include "libavutil/mem.h"
 
 #include "bytestream.h"
-#include "hevc.h"
 #include "h264.h"
 #include "h2645_parse.h"
 #include "vvc.h"
+
+#include "hevc/hevc.h"
 
 int ff_h2645_extract_rbsp(const uint8_t *src, int length,
                           H2645RBSP *rbsp, H2645NAL *nal, int small_padding)
@@ -40,8 +41,9 @@ int ff_h2645_extract_rbsp(const uint8_t *src, int length,
 
     nal->skipped_bytes = 0;
 #define STARTCODE_TEST                                                  \
-        if (i + 2 < length && src[i + 1] == 0 && src[i + 2] <= 3) {     \
-            if (src[i + 2] != 3 && src[i + 2] != 0) {                   \
+        if (i + 2 < length && src[i + 1] == 0 &&                        \
+           (src[i + 2] == 3 || src[i + 2] == 1)) {                      \
+            if (src[i + 2] == 1) {                                      \
                 /* startcode, so we must be past the end */             \
                 length = i;                                             \
             }                                                           \

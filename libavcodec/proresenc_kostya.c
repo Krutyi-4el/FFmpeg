@@ -4,9 +4,6 @@
  * Copyright (c) 2011 Anatoliy Wasserman
  * Copyright (c) 2012 Konstantin Shishkov
  *
- * This encoder appears to be based on Anatoliy Wassermans considering
- * similarities in the bugs.
- *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -24,6 +21,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
@@ -479,7 +477,7 @@ static void put_alpha_diff(PutBitContext *pb, int cur, int prev, int abits)
     const int dsize = 1 << dbits - 1;
     int diff = cur - prev;
 
-    diff = av_mod_uintp2(diff, abits);
+    diff = av_zero_extend(diff, abits);
     if (diff >= (1 << abits) - dsize)
         diff -= 1 << abits;
     if (diff < -dsize || diff > dsize || !diff) {
@@ -723,7 +721,7 @@ static int est_alpha_diff(int cur, int prev, int abits)
     const int dsize = 1 << dbits - 1;
     int diff = cur - prev;
 
-    diff = av_mod_uintp2(diff, abits);
+    diff = av_zero_extend(diff, abits);
     if (diff >= (1 << abits) - dsize)
         diff -= 1 << abits;
     if (diff < -dsize || diff > dsize || !diff)
@@ -981,7 +979,7 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     ctx->pic = pic;
     pkt_size = ctx->frame_size_upper_bound;
 
-    if ((ret = ff_alloc_packet(avctx, pkt, pkt_size + AV_INPUT_BUFFER_MIN_SIZE)) < 0)
+    if ((ret = ff_alloc_packet(avctx, pkt, pkt_size + FF_INPUT_BUFFER_MIN_SIZE)) < 0)
         return ret;
 
     orig_buf = pkt->data;
@@ -1327,39 +1325,39 @@ static const AVOption options[] = {
         AV_OPT_TYPE_INT, { .i64 = 8 }, 1, MAX_MBS_PER_SLICE, VE },
     { "profile",       NULL, OFFSET(profile), AV_OPT_TYPE_INT,
         { .i64 = PRORES_PROFILE_AUTO },
-        PRORES_PROFILE_AUTO, PRORES_PROFILE_4444XQ, VE, "profile" },
+        PRORES_PROFILE_AUTO, PRORES_PROFILE_4444XQ, VE, .unit = "profile" },
     { "auto",         NULL, 0, AV_OPT_TYPE_CONST, { .i64 = PRORES_PROFILE_AUTO },
-        0, 0, VE, "profile" },
+        0, 0, VE, .unit = "profile" },
     { "proxy",         NULL, 0, AV_OPT_TYPE_CONST, { .i64 = PRORES_PROFILE_PROXY },
-        0, 0, VE, "profile" },
+        0, 0, VE, .unit = "profile" },
     { "lt",            NULL, 0, AV_OPT_TYPE_CONST, { .i64 = PRORES_PROFILE_LT },
-        0, 0, VE, "profile" },
+        0, 0, VE, .unit = "profile" },
     { "standard",      NULL, 0, AV_OPT_TYPE_CONST, { .i64 = PRORES_PROFILE_STANDARD },
-        0, 0, VE, "profile" },
+        0, 0, VE, .unit = "profile" },
     { "hq",            NULL, 0, AV_OPT_TYPE_CONST, { .i64 = PRORES_PROFILE_HQ },
-        0, 0, VE, "profile" },
+        0, 0, VE, .unit = "profile" },
     { "4444",          NULL, 0, AV_OPT_TYPE_CONST, { .i64 = PRORES_PROFILE_4444 },
-        0, 0, VE, "profile" },
+        0, 0, VE, .unit = "profile" },
     { "4444xq",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = PRORES_PROFILE_4444XQ },
-        0, 0, VE, "profile" },
+        0, 0, VE, .unit = "profile" },
     { "vendor", "vendor ID", OFFSET(vendor),
         AV_OPT_TYPE_STRING, { .str = "Lavc" }, 0, 0, VE },
     { "bits_per_mb", "desired bits per macroblock", OFFSET(bits_per_mb),
         AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, VE },
     { "quant_mat", "quantiser matrix", OFFSET(quant_sel), AV_OPT_TYPE_INT,
-        { .i64 = -1 }, -1, QUANT_MAT_DEFAULT, VE, "quant_mat" },
+        { .i64 = -1 }, -1, QUANT_MAT_DEFAULT, VE, .unit = "quant_mat" },
     { "auto",          NULL, 0, AV_OPT_TYPE_CONST, { .i64 = -1 },
-        0, 0, VE, "quant_mat" },
+        0, 0, VE, .unit = "quant_mat" },
     { "proxy",         NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QUANT_MAT_PROXY },
-        0, 0, VE, "quant_mat" },
+        0, 0, VE, .unit = "quant_mat" },
     { "lt",            NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QUANT_MAT_LT },
-        0, 0, VE, "quant_mat" },
+        0, 0, VE, .unit = "quant_mat" },
     { "standard",      NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QUANT_MAT_STANDARD },
-        0, 0, VE, "quant_mat" },
+        0, 0, VE, .unit = "quant_mat" },
     { "hq",            NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QUANT_MAT_HQ },
-        0, 0, VE, "quant_mat" },
+        0, 0, VE, .unit = "quant_mat" },
     { "default",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QUANT_MAT_DEFAULT },
-        0, 0, VE, "quant_mat" },
+        0, 0, VE, .unit = "quant_mat" },
     { "alpha_bits", "bits for alpha plane", OFFSET(alpha_bits), AV_OPT_TYPE_INT,
         { .i64 = 16 }, 0, 16, VE },
     { NULL }

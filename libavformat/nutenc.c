@@ -23,6 +23,7 @@
 
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/mem.h"
 #include "libavutil/tree.h"
 #include "libavutil/dict.h"
 #include "libavutil/avassert.h"
@@ -916,21 +917,6 @@ static int write_sm_data(AVFormatContext *s, AVIOContext *bc, AVPacket *pkt, int
                 break;
             case AV_PKT_DATA_PARAM_CHANGE:
                 flags = bytestream_get_le32(&data);
-#if FF_API_OLD_CHANNEL_LAYOUT
-                if (flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_COUNT) {
-                    put_str(dyn_bc, "Channels");
-                    put_s(dyn_bc, bytestream_get_le32(&data));
-                    sm_data_count++;
-                }
-                if (flags & AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_LAYOUT) {
-                    put_str(dyn_bc, "ChannelLayout");
-                    put_s(dyn_bc, -2);
-                    put_str(dyn_bc, "u64");
-                    put_v(dyn_bc, 8);
-                    avio_write(dyn_bc, data, 8); data+=8;
-                    sm_data_count++;
-                }
-#endif
                 if (flags & AV_SIDE_DATA_PARAM_CHANGE_SAMPLE_RATE) {
                     put_str(dyn_bc, "SampleRate");
                     put_s(dyn_bc, bytestream_get_le32(&data));
@@ -1238,10 +1224,10 @@ static void nut_write_deinit(AVFormatContext *s)
 #define OFFSET(x) offsetof(NUTContext, x)
 #define E AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    { "syncpoints",  "NUT syncpoint behaviour",                         OFFSET(flags), AV_OPT_TYPE_FLAGS, {.i64 = 0},             INT_MIN, INT_MAX, E, "syncpoints" },
-    { "default",     "",                                                0,             AV_OPT_TYPE_CONST, {.i64 = 0},             INT_MIN, INT_MAX, E, "syncpoints" },
-    { "none",        "Disable syncpoints, low overhead and unseekable", 0,             AV_OPT_TYPE_CONST, {.i64 = NUT_PIPE},      INT_MIN, INT_MAX, E, "syncpoints" },
-    { "timestamped", "Extend syncpoints with a wallclock timestamp",    0,             AV_OPT_TYPE_CONST, {.i64 = NUT_BROADCAST}, INT_MIN, INT_MAX, E, "syncpoints" },
+    { "syncpoints",  "NUT syncpoint behaviour",                         OFFSET(flags), AV_OPT_TYPE_FLAGS, {.i64 = 0},             INT_MIN, INT_MAX, E, .unit = "syncpoints" },
+    { "default",     "",                                                0,             AV_OPT_TYPE_CONST, {.i64 = 0},             INT_MIN, INT_MAX, E, .unit = "syncpoints" },
+    { "none",        "Disable syncpoints, low overhead and unseekable", 0,             AV_OPT_TYPE_CONST, {.i64 = NUT_PIPE},      INT_MIN, INT_MAX, E, .unit = "syncpoints" },
+    { "timestamped", "Extend syncpoints with a wallclock timestamp",    0,             AV_OPT_TYPE_CONST, {.i64 = NUT_BROADCAST}, INT_MIN, INT_MAX, E, .unit = "syncpoints" },
     { "write_index", "Write index",                               OFFSET(write_index), AV_OPT_TYPE_BOOL,  {.i64 = 1},                   0,       1, E, },
     { NULL },
 };

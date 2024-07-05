@@ -33,6 +33,7 @@
 
 #include "libavutil/internal.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/lfg.h"
 #include "libavutil/random_seed.h"
@@ -158,16 +159,16 @@ typedef struct QREncodeContext {
     { "case_sensitive", "generate code which is case sensitive", OFFSET(case_sensitive), AV_OPT_TYPE_BOOL,   {.i64 = 1},      0,    1, FLAGS }, \
     { "cs",             "generate code which is case sensitive", OFFSET(case_sensitive), AV_OPT_TYPE_BOOL,   {.i64 = 1},      0,    1, FLAGS }, \
                                                                         \
-    { "level", "error correction level, lowest is L", OFFSET(level), AV_OPT_TYPE_INT, { .i64 = AVCOL_SPC_UNSPECIFIED }, 0, QR_ECLEVEL_H, .flags = FLAGS, "level"}, \
-    { "l",     "error correction level, lowest is L", OFFSET(level), AV_OPT_TYPE_INT, { .i64 = AVCOL_SPC_UNSPECIFIED }, 0, QR_ECLEVEL_H, .flags = FLAGS, "level"}, \
-    { "L",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QR_ECLEVEL_L }, 0, 0, FLAGS, "level" }, \
-    { "M",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QR_ECLEVEL_M }, 0, 0, FLAGS, "level" }, \
-    { "Q",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QR_ECLEVEL_Q }, 0, 0, FLAGS, "level" }, \
-    { "H",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QR_ECLEVEL_H }, 0, 0, FLAGS, "level" }, \
+    { "level", "error correction level, lowest is L", OFFSET(level), AV_OPT_TYPE_INT, { .i64 = AVCOL_SPC_UNSPECIFIED }, 0, QR_ECLEVEL_H, .flags = FLAGS, .unit = "level"}, \
+    { "l",     "error correction level, lowest is L", OFFSET(level), AV_OPT_TYPE_INT, { .i64 = AVCOL_SPC_UNSPECIFIED }, 0, QR_ECLEVEL_H, .flags = FLAGS, .unit = "level"}, \
+    { "L",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QR_ECLEVEL_L }, 0, 0, FLAGS, .unit = "level" }, \
+    { "M",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QR_ECLEVEL_M }, 0, 0, FLAGS, .unit = "level" }, \
+    { "Q",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QR_ECLEVEL_Q }, 0, 0, FLAGS, .unit = "level" }, \
+    { "H",     NULL, 0, AV_OPT_TYPE_CONST, { .i64 = QR_ECLEVEL_H }, 0, 0, FLAGS, .unit = "level" }, \
                                                                         \
-    {"expansion", "set the expansion mode", OFFSET(expansion), AV_OPT_TYPE_INT, {.i64=EXPANSION_NORMAL}, 0, 2, FLAGS, "expansion"}, \
-    {"none",     "set no expansion",     OFFSET(expansion), AV_OPT_TYPE_CONST, {.i64 = EXPANSION_NONE},     0, 0, FLAGS, "expansion"}, \
-    {"normal",   "set normal expansion", OFFSET(expansion), AV_OPT_TYPE_CONST, {.i64 = EXPANSION_NORMAL},   0, 0, FLAGS, "expansion"}, \
+    {"expansion", "set the expansion mode", OFFSET(expansion), AV_OPT_TYPE_INT, {.i64=EXPANSION_NORMAL}, 0, 2, FLAGS, .unit = "expansion"}, \
+    {"none",     "set no expansion",     OFFSET(expansion), AV_OPT_TYPE_CONST, {.i64 = EXPANSION_NONE},     0, 0, FLAGS, .unit = "expansion"}, \
+    {"normal",   "set normal expansion", OFFSET(expansion), AV_OPT_TYPE_CONST, {.i64 = EXPANSION_NORMAL},   0, 0, FLAGS, .unit = "expansion"}, \
                                                                         \
     { "foreground_color", "set QR foreground color", OFFSET(foreground_color), AV_OPT_TYPE_COLOR, {.str = "black"}, 0, 0, FLAGS }, \
     { "fc",               "set QR foreground color", OFFSET(foreground_color), AV_OPT_TYPE_COLOR, {.str = "black"}, 0, 0, FLAGS }, \
@@ -283,7 +284,7 @@ static int func_eval_expr_formatted(void *ctx, AVBPrint *bp, const char *functio
                                         argv[1][0], positions);
 }
 
-static FFExpandTextFunction expand_text_functions[] = {
+static const FFExpandTextFunction expand_text_functions[] = {
     { "expr",            1, 1, func_eval_expr },
     { "e",               1, 1, func_eval_expr },
     { "expr_formatted",  2, 3, func_eval_expr_formatted },

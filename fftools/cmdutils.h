@@ -144,8 +144,8 @@ typedef struct OptionDef {
 #define OPT_AUDIO       (1 << 4)
 #define OPT_SUBTITLE    (1 << 5)
 #define OPT_DATA        (1 << 6)
-/* The option is per-file (currently ffmpeg-only). At least one of OPT_INPUT or
- * OPT_OUTPUT must be set when this flag is in use.
+/* The option is per-file (currently ffmpeg-only). At least one of OPT_INPUT,
+ * OPT_OUTPUT, OPT_DECODER must be set when this flag is in use.
    */
 #define OPT_PERFILE     (1 << 7)
 
@@ -174,6 +174,9 @@ typedef struct OptionDef {
 /* This option is an alternative form of some other option, whose
  * name is stored in u1.name_canon */
 #define OPT_HAS_CANON   (1 << 14)
+
+/* ffmpeg-only - OPT_PERFILE may apply to standalone decoders */
+#define OPT_DECODER     (1 << 15)
 
      union {
         void *dst_ptr;
@@ -368,11 +371,13 @@ int check_stream_specifier(AVFormatContext *s, AVStream *st, const char *spec);
  * @param codec The particular codec for which the options should be filtered.
  *              If null, the default one is looked up according to the codec id.
  * @param dst a pointer to the created dictionary
+ * @param opts_used if non-NULL, every option stored in dst is also stored here,
+ *                  with specifiers preserved
  * @return a non-negative number on success, a negative error code on failure
  */
 int filter_codec_opts(const AVDictionary *opts, enum AVCodecID codec_id,
                       AVFormatContext *s, AVStream *st, const AVCodec *codec,
-                      AVDictionary **dst);
+                      AVDictionary **dst, AVDictionary **opts_used);
 
 /**
  * Setup AVCodecContext options for avformat_find_stream_info().
@@ -395,7 +400,10 @@ int setup_find_stream_info_opts(AVFormatContext *s,
  *
  * @see av_strerror()
  */
-void print_error(const char *filename, int err);
+static inline void print_error(const char *filename, int err)
+{
+    av_log(NULL, AV_LOG_ERROR, "%s: %s\n", filename, av_err2str(err));
+}
 
 /**
  * Print the program banner to stderr. The banner contents depend on the
@@ -476,5 +484,11 @@ double get_rotation(const int32_t *displaymatrix);
 
 /* read file contents into a string */
 char *file_read(const char *filename);
+
+/* Remove keys in dictionary b from dictionary a */
+void remove_avoptions(AVDictionary **a, AVDictionary *b);
+
+/* Check if any keys exist in dictionary m */
+int check_avoptions(AVDictionary *m);
 
 #endif /* FFTOOLS_CMDUTILS_H */

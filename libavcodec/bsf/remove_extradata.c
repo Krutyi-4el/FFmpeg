@@ -25,9 +25,10 @@
 #include "bsf.h"
 #include "bsf_internal.h"
 #include "h264.h"
-#include "hevc.h"
 #include "startcode.h"
 #include "vc1_common.h"
+
+#include "hevc/hevc.h"
 
 enum RemoveFreq {
     REMOVE_FREQ_KEYFRAME,
@@ -230,7 +231,7 @@ static int remove_extradata(AVBSFContext *ctx, AVPacket *pkt)
 #define OFFSET(x) offsetof(RemoveExtradataContext, x)
 #define FLAGS (AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_BSF_PARAM)
 static const AVOption options[] = {
-    { "freq", NULL, OFFSET(freq), AV_OPT_TYPE_INT, { .i64 = REMOVE_FREQ_KEYFRAME }, REMOVE_FREQ_KEYFRAME, REMOVE_FREQ_NONKEYFRAME, FLAGS, "freq" },
+    { "freq", NULL, OFFSET(freq), AV_OPT_TYPE_INT, { .i64 = REMOVE_FREQ_KEYFRAME }, REMOVE_FREQ_KEYFRAME, REMOVE_FREQ_NONKEYFRAME, FLAGS, .unit = "freq" },
         { "k",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = REMOVE_FREQ_NONKEYFRAME }, .flags = FLAGS, .unit = "freq" },
         { "keyframe", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = REMOVE_FREQ_KEYFRAME }, .flags = FLAGS, .unit = "freq" },
         { "e",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = REMOVE_FREQ_ALL      }, .flags = FLAGS, .unit = "freq" },

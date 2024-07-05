@@ -28,6 +28,7 @@
 #include "libavutil/display.h"
 #include "libavutil/error.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixdesc.h"
@@ -40,83 +41,91 @@
 #include "libavformat/avformat.h"
 
 typedef struct DemuxStream {
-    InputStream ist;
+    InputStream              ist;
 
     // name used for logging
-    char log_name[32];
+    char                     log_name[32];
 
-    int sch_idx_stream;
-    int sch_idx_dec;
+    int                      sch_idx_stream;
+    int                      sch_idx_dec;
 
-    double ts_scale;
+    double                   ts_scale;
 
     /* non zero if the packets must be decoded in 'raw_fifo', see DECODING_FOR_* */
-    int decoding_needed;
+    int                      decoding_needed;
 #define DECODING_FOR_OST    1
 #define DECODING_FOR_FILTER 2
 
     /* true if stream data should be discarded */
-    int discard;
+    int                      discard;
 
     // scheduler returned EOF for this stream
-    int finished;
+    int                      finished;
 
-    int streamcopy_needed;
-    int have_sub2video;
+    int                      streamcopy_needed;
+    int                      have_sub2video;
+    int                      reinit_filters;
+    int                      autorotate;
 
-    int wrap_correction_done;
-    int saw_first_ts;
+
+    int                      wrap_correction_done;
+    int                      saw_first_ts;
     ///< dts of the first packet read for this stream (in AV_TIME_BASE units)
-    int64_t first_dts;
+    int64_t                  first_dts;
 
     /* predicted dts of the next packet read for this stream or (when there are
      * several frames in a packet) of the next frame in current packet (in AV_TIME_BASE units) */
-    int64_t       next_dts;
+    int64_t                  next_dts;
     ///< dts of the last packet read for this stream (in AV_TIME_BASE units)
-    int64_t       dts;
+    int64_t                  dts;
 
     const AVCodecDescriptor *codec_desc;
 
     AVDictionary            *decoder_opts;
     DecoderOpts              dec_opts;
     char                     dec_name[16];
+    // decoded media properties, as estimated by opening the decoder
+    AVFrame                 *decoded_params;
 
-    AVBSFContext *bsf;
+    AVBSFContext            *bsf;
 
     /* number of packets successfully read for this stream */
-    uint64_t nb_packets;
+    uint64_t                 nb_packets;
     // combined size of all the packets read
-    uint64_t data_size;
+    uint64_t                 data_size;
 } DemuxStream;
 
 typedef struct Demuxer {
-    InputFile f;
+    InputFile             f;
 
     // name used for logging
-    char log_name[32];
+    char                  log_name[32];
 
-    int64_t wallclock_start;
+    int64_t               wallclock_start;
 
     /**
      * Extra timestamp offset added by discontinuity handling.
      */
-    int64_t ts_offset_discont;
-    int64_t last_ts;
+    int64_t               ts_offset_discont;
+    int64_t               last_ts;
+
+    int64_t               recording_time;
+    int                   accurate_seek;
 
     /* number of times input stream should be looped */
-    int loop;
-    int have_audio_dec;
+    int                   loop;
+    int                   have_audio_dec;
     /* duration of the looped segment of the input file */
-    Timestamp duration;
+    Timestamp             duration;
     /* pts with the smallest/largest values ever seen */
-    Timestamp min_pts;
-    Timestamp max_pts;
+    Timestamp             min_pts;
+    Timestamp             max_pts;
 
     /* number of streams that the user was warned of */
-    int nb_streams_warn;
+    int                   nb_streams_warn;
 
-    float  readrate;
-    double readrate_initial_burst;
+    float                 readrate;
+    double                readrate_initial_burst;
 
     Scheduler            *sch;
 
@@ -157,7 +166,7 @@ InputStream *ist_find_unused(enum AVMediaType type)
 
 static void report_new_stream(Demuxer *d, const AVPacket *pkt)
 {
-    AVStream *st = d->f.ctx->streams[pkt->stream_index];
+    const AVStream *st = d->f.ctx->streams[pkt->stream_index];
 
     if (pkt->stream_index < d->nb_streams_warn)
         return;
@@ -450,13 +459,13 @@ static int input_packet_process(Demuxer *d, AVPacket *pkt, unsigned *send_flags)
     if (ret < 0)
         return ret;
 
-    if (f->recording_time != INT64_MAX) {
+    if (d->recording_time != INT64_MAX) {
         int64_t start_time = 0;
         if (copy_ts) {
             start_time += f->start_time != AV_NOPTS_VALUE ? f->start_time : 0;
             start_time += start_at_zero ? 0 : f->start_time_effective;
         }
-        if (ds->dts >= f->recording_time + start_time)
+        if (ds->dts >= d->recording_time + start_time)
             *send_flags |= DEMUX_SEND_STREAMCOPY_EOF;
     }
 
@@ -474,8 +483,6 @@ static int input_packet_process(Demuxer *d, AVPacket *pkt, unsigned *send_flags)
                av_ts2str(pkt->duration), av_ts2timestr(pkt->duration, &pkt->time_base),
                av_ts2str(f->ts_offset),  av_ts2timestr(f->ts_offset, &AV_TIME_BASE_Q));
     }
-
-    pkt->stream_index = ds->sch_idx_stream;
 
     return 0;
 }
@@ -504,6 +511,8 @@ static int do_send(Demuxer *d, DemuxStream *ds, AVPacket *pkt, unsigned flags,
                    const char *pkt_desc)
 {
     int ret;
+
+    pkt->stream_index = ds->sch_idx_stream;
 
     ret = sch_demux_send(d->sch, d->f.index, pkt, flags);
     if (ret == AVERROR_EOF) {
@@ -546,7 +555,6 @@ static int demux_send(Demuxer *d, DemuxThreadContext *dt, DemuxStream *ds,
 
             d->pkt_heartbeat->pts          = pkt->pts;
             d->pkt_heartbeat->time_base    = pkt->time_base;
-            d->pkt_heartbeat->stream_index = ds1->sch_idx_stream;
             d->pkt_heartbeat->opaque       = (void*)(intptr_t)PKT_OPAQUE_SUB_HEARTBEAT;
 
             ret = do_send(d, ds1, d->pkt_heartbeat, 0, "heartbeat");
@@ -670,7 +678,7 @@ static int demux_thread_init(DemuxThreadContext *dt)
     return 0;
 }
 
-static void *input_thread(void *arg)
+static int input_thread(void *arg)
 {
     Demuxer   *d = arg;
     InputFile *f = &d->f;
@@ -775,7 +783,7 @@ static void *input_thread(void *arg)
 finish:
     demux_thread_uninit(&dt);
 
-    return (void*)(intptr_t)ret;
+    return ret;
 }
 
 static void demux_final_stats(Demuxer *d)
@@ -835,6 +843,8 @@ static void ist_free(InputStream **pist)
     av_freep(&ds->dec_opts.hwaccel_device);
 
     avcodec_parameters_free(&ist->par);
+
+    av_frame_free(&ds->decoded_params);
 
     av_bsf_free(&ds->bsf);
 
@@ -901,11 +911,11 @@ static int ist_use(InputStream *ist, int decoding_needed)
     if (decoding_needed && ds->sch_idx_dec < 0) {
         int is_audio = ist->st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO;
 
-        ds->dec_opts.flags = (!!ist->fix_sub_duration * DECODER_FLAG_FIX_SUB_DURATION) |
-                             (!!(d->f.ctx->iformat->flags & AVFMT_NOTIMESTAMPS) * DECODER_FLAG_TS_UNRELIABLE) |
-                             (!!(d->loop && is_audio) * DECODER_FLAG_SEND_END_TS)
+        ds->dec_opts.flags |= (!!ist->fix_sub_duration * DECODER_FLAG_FIX_SUB_DURATION) |
+                              (!!(d->f.ctx->iformat->flags & AVFMT_NOTIMESTAMPS) * DECODER_FLAG_TS_UNRELIABLE) |
+                              (!!(d->loop && is_audio) * DECODER_FLAG_SEND_END_TS)
 #if FFMPEG_OPT_TOP
-                             | ((ist->top_field_first >= 0) * DECODER_FLAG_TOP_FIELD_FIRST)
+                              | ((ist->top_field_first >= 0) * DECODER_FLAG_TOP_FIELD_FIRST)
 #endif
                              ;
 
@@ -932,8 +942,12 @@ static int ist_use(InputStream *ist, int decoding_needed)
 
         ds->dec_opts.log_parent = ist;
 
-        ret = dec_open(&ist->decoder, d->sch,
-                       &ds->decoder_opts, &ds->dec_opts);
+        ds->decoded_params = av_frame_alloc();
+        if (!ds->decoded_params)
+            return AVERROR(ENOMEM);
+
+        ret = dec_init(&ist->decoder, d->sch,
+                       &ds->decoder_opts, &ds->dec_opts, ds->decoded_params);
         if (ret < 0)
             return ret;
         ds->sch_idx_dec = ret;
@@ -967,10 +981,12 @@ int ist_output_add(InputStream *ist, OutputStream *ost)
     return ost->enc ? ds->sch_idx_dec : ds->sch_idx_stream;
 }
 
-int ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple)
+int ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple,
+                   InputFilterOptions *opts)
 {
     Demuxer      *d = demuxer_from_ifile(ist->file);
     DemuxStream *ds = ds_from_ist(ist);
+    int64_t tsoffset = 0;
     int ret;
 
     ret = ist_use(ist, is_simple ? DECODING_FOR_OST : DECODING_FOR_FILTER);
@@ -983,11 +999,33 @@ int ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple)
 
     ist->filters[ist->nb_filters - 1] = ifilter;
 
-    ret = dec_add_filter(ist->decoder, ifilter);
-    if (ret < 0)
-        return ret;
+    if (ist->par->codec_type == AVMEDIA_TYPE_VIDEO) {
+        if (ist->framerate.num > 0 && ist->framerate.den > 0) {
+            opts->framerate = ist->framerate;
+            opts->flags |= IFILTER_FLAG_CFR;
+        } else
+            opts->framerate = av_guess_frame_rate(d->f.ctx, ist->st, NULL);
+    } else if (ist->par->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+        /* Compute the size of the canvas for the subtitles stream.
+           If the subtitles codecpar has set a size, use it. Otherwise use the
+           maximum dimensions of the video streams in the same file. */
+        opts->sub2video_width  = ist->par->width;
+        opts->sub2video_height = ist->par->height;
+        if (!(opts->sub2video_width && opts->sub2video_height)) {
+            for (int j = 0; j < d->f.nb_streams; j++) {
+                AVCodecParameters *par1 = d->f.streams[j]->par;
+                if (par1->codec_type == AVMEDIA_TYPE_VIDEO) {
+                    opts->sub2video_width  = FFMAX(opts->sub2video_width,  par1->width);
+                    opts->sub2video_height = FFMAX(opts->sub2video_height, par1->height);
+                }
+            }
+        }
 
-    if (ist->par->codec_type == AVMEDIA_TYPE_SUBTITLE) {
+        if (!(opts->sub2video_width && opts->sub2video_height)) {
+            opts->sub2video_width  = FFMAX(opts->sub2video_width,  720);
+            opts->sub2video_height = FFMAX(opts->sub2video_height, 576);
+        }
+
         if (!d->pkt_heartbeat) {
             d->pkt_heartbeat = av_packet_alloc();
             if (!d->pkt_heartbeat)
@@ -995,6 +1033,33 @@ int ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple)
         }
         ds->have_sub2video = 1;
     }
+
+    ret = av_frame_copy_props(opts->fallback, ds->decoded_params);
+    if (ret < 0)
+        return ret;
+    opts->fallback->format = ds->decoded_params->format;
+    opts->fallback->width  = ds->decoded_params->width;
+    opts->fallback->height = ds->decoded_params->height;
+
+    ret = av_channel_layout_copy(&opts->fallback->ch_layout, &ds->decoded_params->ch_layout);
+    if (ret < 0)
+        return ret;
+
+    if (copy_ts) {
+        tsoffset = d->f.start_time == AV_NOPTS_VALUE ? 0 : d->f.start_time;
+        if (!start_at_zero && d->f.ctx->start_time != AV_NOPTS_VALUE)
+            tsoffset += d->f.ctx->start_time;
+    }
+    opts->trim_start_us = ((d->f.start_time == AV_NOPTS_VALUE) || !d->accurate_seek) ?
+                          AV_NOPTS_VALUE : tsoffset;
+    opts->trim_end_us   = d->recording_time;
+
+    opts->name = av_strdup(ds->dec_name);
+    if (!opts->name)
+        return AVERROR(ENOMEM);
+
+    opts->flags |= IFILTER_FLAG_AUTOROTATE * !!(ds->autorotate) |
+                   IFILTER_FLAG_REINIT     * !!(ds->reinit_filters);
 
     return ds->sch_idx_dec;
 }
@@ -1142,7 +1207,7 @@ static DemuxStream *demux_stream_alloc(Demuxer *d, AVStream *st)
     return ds;
 }
 
-static int ist_add(const OptionsContext *o, Demuxer *d, AVStream *st)
+static int ist_add(const OptionsContext *o, Demuxer *d, AVStream *st, AVDictionary **opts_used)
 {
     AVFormatContext *ic = d->f.ctx;
     AVCodecParameters *par = st->codecpar;
@@ -1173,8 +1238,8 @@ static int ist_add(const OptionsContext *o, Demuxer *d, AVStream *st)
     ds->ts_scale = 1.0;
     MATCH_PER_STREAM_OPT(ts_scale, dbl, ds->ts_scale, ic, st);
 
-    ist->autorotate = 1;
-    MATCH_PER_STREAM_OPT(autorotate, i, ist->autorotate, ic, st);
+    ds->autorotate = 1;
+    MATCH_PER_STREAM_OPT(autorotate, i, ds->autorotate, ic, st);
 
     MATCH_PER_STREAM_OPT(codec_tags, str, codec_tag, ic, st);
     if (codec_tag) {
@@ -1267,13 +1332,15 @@ static int ist_add(const OptionsContext *o, Demuxer *d, AVStream *st)
     if (ret < 0)
         return ret;
 
-    ret = filter_codec_opts(o->g->codec_opts, ist->st->codecpar->codec_id,
-                            ic, st, ist->dec, &ds->decoder_opts);
-    if (ret < 0)
-        return ret;
+    if (ist->dec) {
+        ret = filter_codec_opts(o->g->codec_opts, ist->st->codecpar->codec_id,
+                                ic, st, ist->dec, &ds->decoder_opts, opts_used);
+        if (ret < 0)
+            return ret;
+    }
 
-    ist->reinit_filters = -1;
-    MATCH_PER_STREAM_OPT(reinit_filters, i, ist->reinit_filters, ic, st);
+    ds->reinit_filters = -1;
+    MATCH_PER_STREAM_OPT(reinit_filters, i, ds->reinit_filters, ic, st);
 
     ist->user_set_discard = AVDISCARD_NONE;
 
@@ -1293,8 +1360,7 @@ static int ist_add(const OptionsContext *o, Demuxer *d, AVStream *st)
         ist->user_set_discard = ist->st->discard;
     }
 
-    if (o->bitexact)
-        av_dict_set(&ds->decoder_opts, "flags", "+bitexact", AV_DICT_MULTIKEY);
+    ds->dec_opts.flags |= DECODER_FLAG_BITEXACT * !!o->bitexact;
 
     /* Attached pics are sparse, therefore we would not want to delay their decoding
      * till EOF. */
@@ -1318,13 +1384,32 @@ static int ist_add(const OptionsContext *o, Demuxer *d, AVStream *st)
         MATCH_PER_STREAM_OPT(top_field_first, i, ist->top_field_first, ic, st);
 #endif
 
-        ist->framerate_guessed = av_guess_frame_rate(ic, st, NULL);
-
         break;
     case AVMEDIA_TYPE_AUDIO: {
-        int guess_layout_max = INT_MAX;
-        MATCH_PER_STREAM_OPT(guess_layout_max, i, guess_layout_max, ic, st);
-        guess_input_channel_layout(ist, par, guess_layout_max);
+        char *ch_layout_str = NULL;
+        MATCH_PER_STREAM_OPT(audio_ch_layouts, str, ch_layout_str, ic, st);
+        if (ch_layout_str) {
+            AVChannelLayout ch_layout;
+            ret = av_channel_layout_from_string(&ch_layout, ch_layout_str);
+            if (ret < 0) {
+                av_log(ist, AV_LOG_ERROR, "Error parsing channel layout %s.\n", ch_layout_str);
+                return ret;
+            }
+            if (par->ch_layout.nb_channels <= 0 || par->ch_layout.nb_channels == ch_layout.nb_channels) {
+                av_channel_layout_uninit(&par->ch_layout);
+                par->ch_layout = ch_layout;
+            } else {
+                av_log(ist, AV_LOG_ERROR,
+                    "Specified channel layout '%s' has %d channels, but input has %d channels.\n",
+                    ch_layout_str, ch_layout.nb_channels, par->ch_layout.nb_channels);
+                av_channel_layout_uninit(&ch_layout);
+                return AVERROR(EINVAL);
+            }
+        } else {
+            int guess_layout_max = INT_MAX;
+            MATCH_PER_STREAM_OPT(guess_layout_max, i, guess_layout_max, ic, st);
+            guess_input_channel_layout(ist, par, guess_layout_max);
+        }
         break;
     }
     case AVMEDIA_TYPE_DATA:
@@ -1340,27 +1425,6 @@ static int ist_add(const OptionsContext *o, Demuxer *d, AVStream *st)
                 return ret;
             }
         }
-
-        /* Compute the size of the canvas for the subtitles stream.
-           If the subtitles codecpar has set a size, use it. Otherwise use the
-           maximum dimensions of the video streams in the same file. */
-        ist->sub2video.w = par->width;
-        ist->sub2video.h = par->height;
-        if (!(ist->sub2video.w && ist->sub2video.h)) {
-            for (int j = 0; j < ic->nb_streams; j++) {
-                AVCodecParameters *par1 = ic->streams[j]->codecpar;
-                if (par1->codec_type == AVMEDIA_TYPE_VIDEO) {
-                    ist->sub2video.w = FFMAX(ist->sub2video.w, par1->width);
-                    ist->sub2video.h = FFMAX(ist->sub2video.h, par1->height);
-                }
-            }
-        }
-
-        if (!(ist->sub2video.w && ist->sub2video.h)) {
-            ist->sub2video.w = FFMAX(ist->sub2video.w, 720);
-            ist->sub2video.h = FFMAX(ist->sub2video.h, 576);
-        }
-
         break;
     }
     case AVMEDIA_TYPE_ATTACHMENT:
@@ -1489,8 +1553,7 @@ int ifile_open(const OptionsContext *o, const char *filename, Scheduler *sch)
     const AVInputFormat *file_iformat = NULL;
     int err, i, ret = 0;
     int64_t timestamp;
-    AVDictionary *unused_opts = NULL;
-    const AVDictionaryEntry *e = NULL;
+    AVDictionary *opts_used = NULL;
     const char*    video_codec_name = NULL;
     const char*    audio_codec_name = NULL;
     const char* subtitle_codec_name = NULL;
@@ -1723,11 +1786,11 @@ int ifile_open(const OptionsContext *o, const char *filename, Scheduler *sch)
     }
 
     f->start_time = start_time;
-    f->recording_time = recording_time;
+    d->recording_time = recording_time;
     f->input_sync_ref = o->input_sync_ref;
     f->input_ts_offset = o->input_ts_offset;
     f->ts_offset  = o->input_ts_offset - (copy_ts ? (start_at_zero && ic->start_time != AV_NOPTS_VALUE ? ic->start_time : 0) : timestamp);
-    f->accurate_seek = o->accurate_seek;
+    d->accurate_seek   = o->accurate_seek;
     d->loop = o->loop;
     d->nb_streams_warn = ic->nb_streams;
 
@@ -1762,48 +1825,21 @@ int ifile_open(const OptionsContext *o, const char *filename, Scheduler *sch)
 
     /* Add all the streams from the given input file to the demuxer */
     for (int i = 0; i < ic->nb_streams; i++) {
-        ret = ist_add(o, d, ic->streams[i]);
-        if (ret < 0)
+        ret = ist_add(o, d, ic->streams[i], &opts_used);
+        if (ret < 0) {
+            av_dict_free(&opts_used);
             return ret;
+        }
     }
 
     /* dump the file content */
     av_dump_format(ic, f->index, filename, 0);
 
     /* check if all codec options have been used */
-    unused_opts = strip_specifiers(o->g->codec_opts);
-    for (i = 0; i < f->nb_streams; i++) {
-        DemuxStream *ds = ds_from_ist(f->streams[i]);
-        e = NULL;
-        while ((e = av_dict_iterate(ds->decoder_opts, e)))
-            av_dict_set(&unused_opts, e->key, NULL, 0);
-    }
-
-    e = NULL;
-    while ((e = av_dict_iterate(unused_opts, e))) {
-        const AVClass *class = avcodec_get_class();
-        const AVOption *option = av_opt_find(&class, e->key, NULL, 0,
-                                             AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ);
-        const AVClass *fclass = avformat_get_class();
-        const AVOption *foption = av_opt_find(&fclass, e->key, NULL, 0,
-                                             AV_OPT_SEARCH_CHILDREN | AV_OPT_SEARCH_FAKE_OBJ);
-        if (!option || foption)
-            continue;
-
-
-        if (!(option->flags & AV_OPT_FLAG_DECODING_PARAM)) {
-            av_log(d, AV_LOG_ERROR, "Codec AVOption %s (%s) is not a decoding "
-                   "option.\n", e->key, option->help ? option->help : "");
-            return AVERROR(EINVAL);
-        }
-
-        av_log(d, AV_LOG_WARNING, "Codec AVOption %s (%s) has not been used "
-               "for any stream. The most likely reason is either wrong type "
-               "(e.g. a video option with no video streams) or that it is a "
-               "private option of some decoder which was not actually used "
-               "for any stream.\n", e->key, option->help ? option->help : "");
-    }
-    av_dict_free(&unused_opts);
+    ret = check_avoptions_used(o->g->codec_opts, opts_used, d, 1);
+    av_dict_free(&opts_used);
+    if (ret < 0)
+        return ret;
 
     for (i = 0; i < o->dump_attachment.nb_opt; i++) {
         int j;

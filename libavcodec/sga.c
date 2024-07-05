@@ -19,6 +19,7 @@
  */
 
 #include "libavutil/common.h"
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "get_bits.h"
 #include "bytestream.h"
@@ -72,7 +73,7 @@ static int decode_palette(GetByteContext *gb, uint32_t *pal)
         return AVERROR_INVALIDDATA;
 
     memset(pal, 0, 16 * sizeof(*pal));
-    init_get_bits8(&gbit, gb->buffer, 18);
+    (void)init_get_bits8(&gbit, gb->buffer, 18);
 
     for (int RGBIndex = 0; RGBIndex < 3; RGBIndex++) {
         for (int index = 0; index < 16; index++) {
